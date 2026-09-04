@@ -11,6 +11,7 @@ export interface DbRow { id: number; path: string; text: string; embedding: Buff
 export class MemoryDatabase {
   readonly db: Database.Database;
   private readonly config: Config;
+  private readonly fileState = new Map<string, { mtimeMs: number; size: number }>();
   constructor(config: Config) {
     this.config = config;
     if (existsSync(config.dbPath) && process.env.REMME_SKIP_BACKUP !== "1") copyFileSync(config.dbPath, `${config.dbPath}.bak`);
@@ -24,14 +25,20 @@ export class MemoryDatabase {
     const files = new Set(readdirSync(this.config.memoryDir).filter((x) => x.endsWith(".md")));
     const existing = this.db.prepare("SELECT DISTINCT path FROM memory_chunks").all() as { path: string }[];
     const remove = this.db.prepare("DELETE FROM memory_chunks WHERE path = ?");
-    for (const row of existing) if (!files.has(basename(row.path))) remove.run(row.path);
+    for (const row of existing) if (!files.has(basename(row.path))) { remove.run(row.path); this.fileState.delete(row.path); }
     for (const file of files) {
-      const path = join(this.config.memoryDir, file); const source = readFileSync(path, "utf8");
-      const hash = `${path}:${BunHash(source)}`; const old = this.db.prepare("SELECT hash FROM memory_chunks WHERE path = ? LIMIT 1").get(path) as { hash?: string } | undefined;
-      if (old?.hash === hash) continue;
+      const path = join(this.config.memoryDir, file);
+      const stat = statSync(path);
+      const previous = this.fileState.get(path);
+      if (previous?.mtimeMs === stat.mtimeMs && previous.size === stat.size) continue;
+      const source = readFileSync(path, "utf8");
+      const hash = `${path}:${BunHash(source)}`;
+      const old = this.db.prepare("SELECT hash FROM memory_chunks WHERE path = ? LIMIT 1").get(path) as { hash?: string } | undefined;
+      if (old?.hash?.startsWith(`${hash}:`)) { this.fileState.set(path, { mtimeMs: stat.mtimeMs, size: stat.size }); continue; }
       this.db.prepare("DELETE FROM memory_chunks WHERE path = ?").run(path);
       const parsed = parseMarkdown(source, this.config.agent);
       for (const chunk of chunkMarkdown(parsed.body, parsed.metadata)) this.insertChunk(path, chunk, `${hash}:${chunk.startLine}`);
+      this.fileState.set(path, { mtimeMs: stat.mtimeMs, size: stat.size });
     }
   }
   insertChunk(path: string, chunk: Chunk, hash: string, embedding: Float32Array | null = null): number {
@@ -39,6 +46,7 @@ export class MemoryDatabase {
     const id = Number(r.lastInsertRowid); this.db.prepare("INSERT INTO memory_fts(rowid,text) VALUES (?,?)").run(id, chunk.text); return id;
   }
   rows(): DbRow[] { return this.db.prepare("SELECT * FROM memory_chunks").all() as DbRow[]; }
+  findPath(path: string): DbRow | undefined { return this.db.prepare("SELECT * FROM memory_chunks WHERE path = ? LIMIT 1").get(path) as DbRow | undefined; }
   setEmbedding(path: string, embedding: Float32Array): void { const rows = this.db.prepare("SELECT id FROM memory_chunks WHERE path = ?").all(path) as { id: number }[]; const update = this.db.prepare("UPDATE memory_chunks SET embedding = ? WHERE id = ?"); const addVector = this.db.prepare("INSERT OR REPLACE INTO memory_vec(rowid, embedding) VALUES (?, ?)"); const tx = this.db.transaction(() => { for (const row of rows) { const buffer = Buffer.from(embedding.buffer); update.run(buffer, row.id); try { addVector.run(row.id, buffer); } catch { /* sqlite-vec optional */ } } }); tx(); }
   addRelation(source: number, type: string, target: number, agent: string): void { this.db.prepare("INSERT OR REPLACE INTO memory_relations VALUES (?,?,?,?,?)").run(source, type, target, agent, new Date().toISOString()); }
   addProvenance(memoryId: number, event: string, agent: string, sourceId: number | null, note = ""): void { this.db.prepare("INSERT INTO memory_provenance(memory_id,event_type,agent,timestamp,source_id,note) VALUES (?,?,?,?,?,?)").run(memoryId, event, agent, new Date().toISOString(), sourceId, note); }
