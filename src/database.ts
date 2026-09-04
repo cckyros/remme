@@ -144,7 +144,7 @@ export class MemoryDatabase {
   }
   addRelation(source: number, type: string, target: number, agent: string): void { this.db.prepare("INSERT OR REPLACE INTO memory_relations VALUES (?,?,?,?,?)").run(source, type, target, agent, new Date().toISOString()); }
   addProvenance(memoryId: number, event: string, agent: string, sourceId: number | null, note = ""): void { this.db.prepare("INSERT INTO memory_provenance(memory_id,event_type,agent,timestamp,source_id,note) VALUES (?,?,?,?,?,?)").run(memoryId, event, agent, new Date().toISOString(), sourceId, note); }
-  searchText(query: string): DbRow[] { const cjk = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/u.test(query); if (cjk && [...query].length < 3) return this.db.prepare("SELECT * FROM memory_chunks WHERE text LIKE ? LIMIT 100").all(`%${query}%`) as DbRow[]; const match = `"${query.replaceAll('"', '""')}"`; return this.db.prepare("SELECT c.* FROM memory_fts f JOIN memory_chunks c ON c.id=f.rowid WHERE memory_fts MATCH ? LIMIT 100").all(match) as DbRow[]; }
+  searchText(query: string): DbRow[] { const cjk = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/u.test(query); if (cjk && [...query].length < 3) return this.db.prepare("SELECT * FROM memory_chunks WHERE text LIKE ? LIMIT 100").all(`%${query}%`) as DbRow[]; const tokens = query.trim().split(/\s+/).filter(Boolean).map((t) => `"${t.replaceAll('"', '""')}"`); const match = tokens.length ? tokens.join(" ") : '""'; return this.db.prepare("SELECT c.* FROM memory_fts f JOIN memory_chunks c ON c.id=f.rowid WHERE memory_fts MATCH ? LIMIT 100").all(match) as DbRow[]; }
   searchVector(query: Float32Array): { row: DbRow; score: number }[] {
     const dims = query.length;
     if (dims === 384 && this.vecAvailable) {
