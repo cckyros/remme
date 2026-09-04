@@ -55,7 +55,9 @@ export async function memoryImportRollback(args: Record<string, unknown>): Promi
   const importId = String(args.importId ?? "");
   if (!importId) throw new Error("importId is required");
   const result = db.rollbackImport(importId);
-  const importDir = join(config.memoryDir, "imports", "openclaw");
+  const imports = db.importStatus(importId) as { source_type: string }[];
+  const sourceType = imports[0]?.source_type ?? "openclaw";
+  const importDir = join(config.memoryDir, "imports", sourceType);
   if (existsSync(importDir)) rmSync(importDir, { recursive: true, force: true });
   return { importId, status: "rolled-back", removedChunks: result.removedChunks, removedSources: result.removedSources };
 }

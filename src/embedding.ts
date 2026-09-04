@@ -14,7 +14,7 @@ export async function embed(text: string, model: string): Promise<Float32Array> 
     queryCache.clear();
   }
   const cached = queryCache.get(text);
-  if (cached) return cached;
+  if (cached) { queryCache.delete(text); queryCache.set(text, cached); return cached; }
   const output = await extractor(text, { pooling: "mean", normalize: true });
   const result = new Float32Array(output.data as Float32Array);
   if (queryCache.size >= QUERY_CACHE_MAX) {

@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { copyFileSync, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { cosine } from "./embedding.ts";
 import type { Config } from "./config.ts";
@@ -58,7 +58,14 @@ export class MemoryDatabase {
     this.db.exec(`CREATE TABLE IF NOT EXISTS memory_import_records (id INTEGER PRIMARY KEY, import_id TEXT NOT NULL, source_kind TEXT NOT NULL, original_path TEXT NOT NULL, original_record_id TEXT, source_hash TEXT NOT NULL, target_source_id INTEGER, target_chunk_ids TEXT NOT NULL DEFAULT '[]', embedding_mode TEXT NOT NULL DEFAULT 'skip', embedding_dims INTEGER, status TEXT NOT NULL, FOREIGN KEY(import_id) REFERENCES memory_imports(id) ON DELETE CASCADE)`);
     this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_import_dedup ON memory_import_records(source_kind, original_path, COALESCE(original_record_id, ''), source_hash)");
   }
-  private recoverInterruptedImports(): void { this.db.prepare("UPDATE memory_imports SET status = 'interrupted' WHERE status IN ('pending','running')").run(); }
+  private recoverInterruptedImports(): void {
+    this.db.prepare("UPDATE memory_imports SET status = 'interrupted' WHERE status IN ('pending','running')").run();
+    const interrupted = this.db.prepare("SELECT id, source_type FROM memory_imports WHERE status = 'interrupted'").all() as { id: string; source_type: string }[];
+    for (const imp of interrupted) {
+      const stagingDir = join(this.config.memoryDir, "imports", imp.source_type, `.staging-${imp.id}`);
+      if (existsSync(stagingDir)) { try { rmSync(stagingDir, { recursive: true, force: true }); } catch { /* best effort */ } }
+    }
+  }
   close(): void { this.db.close(); }
   private scanMarkdownRecursive(dir: string): string[] {
     const result: string[] = [];
