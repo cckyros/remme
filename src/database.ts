@@ -17,7 +17,9 @@ export class MemoryDatabase {
   private vecAvailable = false;
   private syncDirty = true;
   private quickSyncCount = 0;
+  private lastQuickSyncMs = 0;
   private static readonly QUICK_SYNC_THRESHOLD = 20;
+  private static readonly QUICK_SYNC_MIN_INTERVAL_MS = 5000;
   constructor(config: Config) {
     this.config = config;
     if (existsSync(config.dbPath) && process.env.REMME_SKIP_BACKUP !== "1") copyFileSync(config.dbPath, `${config.dbPath}.bak`);
@@ -80,13 +82,15 @@ export class MemoryDatabase {
   }
   sync(): void {
     const files = new Set(this.scanMarkdownRecursive(this.config.memoryDir).map((p) => relative(this.config.memoryDir, p)));
+    const fileFullPathSet = new Set<string>();
+    for (const f of files) fileFullPathSet.add(join(this.config.memoryDir, f));
     const existing = this.db.prepare("SELECT DISTINCT path, origin FROM memory_chunks").all() as { path: string; origin: string }[];
     const removeChunk = this.db.prepare("DELETE FROM memory_chunks WHERE path = ?");
     const removeFts = this.db.prepare("DELETE FROM memory_fts WHERE rowid IN (SELECT id FROM memory_chunks WHERE path = ?)");
     for (const row of existing) {
       const rel = relative(this.config.memoryDir, row.path);
       if (row.origin === "native" && !files.has(rel)) { removeFts.run(row.path); removeChunk.run(row.path); this.fileState.delete(row.path); }
-      else if (row.origin === "imported" && !existsSync(row.path)) { removeFts.run(row.path); removeChunk.run(row.path); this.fileState.delete(row.path); }
+      else if (row.origin === "imported" && !fileFullPathSet.has(row.path)) { removeFts.run(row.path); removeChunk.run(row.path); this.fileState.delete(row.path); }
     }
     this.syncDirty = false;
     for (const file of files) {
@@ -105,8 +109,21 @@ export class MemoryDatabase {
       this.fileState.set(path, { mtimeMs: stat.mtimeMs, size: stat.size });
     }
   }
+  indexFile(absPath: string): void {
+    const source = readFileSync(absPath, "utf8");
+    const parsed = parseMarkdown(source, this.config.agent);
+    const isImported = parsed.metadata.origin === "imported";
+    const hashBase = isImported && parsed.metadata.importId ? `${absPath}:${BunHash(source)}:${parsed.metadata.importId}` : `${absPath}:${BunHash(source)}`;
+    this.db.prepare("DELETE FROM memory_chunks WHERE path = ?").run(absPath);
+    for (const chunk of chunkMarkdown(parsed.body, parsed.metadata)) this.insertChunk(absPath, chunk, `${hashBase}:${chunk.startLine}`);
+    const stat = statSync(absPath);
+    this.fileState.set(absPath, { mtimeMs: stat.mtimeMs, size: stat.size });
+  }
   quickSync(): void {
     if (this.syncDirty || ++this.quickSyncCount >= MemoryDatabase.QUICK_SYNC_THRESHOLD) { this.quickSyncCount = 0; this.sync(); return; }
+    const now = Date.now();
+    if (now - this.lastQuickSyncMs < MemoryDatabase.QUICK_SYNC_MIN_INTERVAL_MS) return;
+    this.lastQuickSyncMs = now;
     for (const [path, prev] of this.fileState) {
       try { const stat = statSync(path); if (stat.mtimeMs !== prev.mtimeMs || stat.size !== prev.size) { this.quickSyncCount = 0; this.sync(); return; } }
       catch { this.quickSyncCount = 0; this.sync(); return; }

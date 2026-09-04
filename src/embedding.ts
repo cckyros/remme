@@ -27,6 +27,6 @@ export async function embed(text: string, model: string): Promise<Float32Array> 
 
 export function cosine(a: Float32Array, b: Float32Array): number {
   let dot = 0; let an = 0; let bn = 0;
-  for (let i = 0; i < Math.min(a.length, b.length); i++) { dot += a[i] * a[i]; an += a[i] ** 2; bn += b[i] ** 2; }
+  for (let i = 0; i < Math.min(a.length, b.length); i++) { dot += a[i] * b[i]; an += a[i] ** 2; bn += b[i] ** 2; }
   return an && bn ? dot / Math.sqrt(an * bn) : 0;
 }
