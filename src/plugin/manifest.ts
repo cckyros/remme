@@ -1,0 +1,1 @@
+export const manifest = { name: "remme", version: "0.1.0", description: "Local-first MCP knowledge memory with SQLite and cross-agent provenance.", tools: ["memory_search", "memory_write", "memory_update", "memory_promote", "memory_link", "memory_read", "memory_list", "memory_restore"] } as const;

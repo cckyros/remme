@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+
+# Local agent/tool state
+.goal-acceptance/
+.serena/
+.code-review-graph/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Runtime data
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test coverage
+coverage/
+.nyc_output/
