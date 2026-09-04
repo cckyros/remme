@@ -15,6 +15,9 @@ export class MemoryDatabase {
   private readonly config: Config;
   private readonly fileState = new Map<string, { mtimeMs: number; size: number }>();
   private vecAvailable = false;
+  private syncDirty = true;
+  private quickSyncCount = 0;
+  private static readonly QUICK_SYNC_THRESHOLD = 20;
   constructor(config: Config) {
     this.config = config;
     if (existsSync(config.dbPath) && process.env.REMME_SKIP_BACKUP !== "1") copyFileSync(config.dbPath, `${config.dbPath}.bak`);
@@ -78,6 +81,7 @@ export class MemoryDatabase {
       if (row.origin === "native" && !files.has(rel)) { removeFts.run(row.path); removeChunk.run(row.path); this.fileState.delete(row.path); }
       else if (row.origin === "imported" && !existsSync(row.path)) { removeFts.run(row.path); removeChunk.run(row.path); this.fileState.delete(row.path); }
     }
+    this.syncDirty = false;
     for (const file of files) {
       const path = join(this.config.memoryDir, file);
       const stat = statSync(path);
@@ -92,6 +96,13 @@ export class MemoryDatabase {
       this.db.prepare("DELETE FROM memory_chunks WHERE path = ?").run(path);
       for (const chunk of chunkMarkdown(parsed.body, parsed.metadata)) this.insertChunk(path, chunk, `${hashBase}:${chunk.startLine}`);
       this.fileState.set(path, { mtimeMs: stat.mtimeMs, size: stat.size });
+    }
+  }
+  quickSync(): void {
+    if (this.syncDirty || ++this.quickSyncCount >= MemoryDatabase.QUICK_SYNC_THRESHOLD) { this.quickSyncCount = 0; this.sync(); return; }
+    for (const [path, prev] of this.fileState) {
+      try { const stat = statSync(path); if (stat.mtimeMs !== prev.mtimeMs || stat.size !== prev.size) { this.quickSyncCount = 0; this.sync(); return; } }
+      catch { this.quickSyncCount = 0; this.sync(); return; }
     }
   }
   insertChunk(path: string, chunk: Chunk, hash: string, embedding: Float32Array | null = null): number {
