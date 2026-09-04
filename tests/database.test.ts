@@ -7,7 +7,7 @@ import { MemoryDatabase } from "../src/database.ts";
 
 test("database indexes markdown and preserves relations and provenance", () => {
   const root = mkdtempSync(join(tmpdir(), "remme-"));
-  const config = { dbPath: join(root, "memory.db"), memoryDir: join(root, "memory"), embeddingModel: "test", vectorWeight: 0.7, textWeight: 0.3, maxResults: 6, minScore: 0, mmrEnabled: true, agent: "test-agent" };
+  const config = { dbPath: join(root, "memory.db"), memoryDir: join(root, "memory"), importsDir: join(root, "imports"), embeddingModel: "test", vectorWeight: 0.7, textWeight: 0.3, maxResults: 6, minScore: 0, mmrEnabled: true, agent: "test-agent" };
   const path = join(config.memoryDir, "decision.md");
   mkdirSync(config.memoryDir, { recursive: true });
   writeFileSync(path, "---\nstatus: verified\nknowledgeType: decision\n---\nUse SQLite for local memory.");

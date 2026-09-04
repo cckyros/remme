@@ -1,10 +1,12 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { loadConfig, ensureConfigDirs, type Config } from "./config.ts";
 import { MemoryDatabase } from "./database.ts";
 import { embed } from "./embedding.ts";
 import { parseMarkdown, renderMarkdown } from "./chunker.ts";
 import { rankResults, type SearchItem } from "./search.ts";
+import { OpenClawImporter } from "./importer/openclaw.ts";
+import { getImporter, availableImporters } from "./importer/registry.ts";
 
 let state: { config: Config; db: MemoryDatabase } | null = null;
 export function closeMemoryStore(): void { state?.db.close(); state = null; }
@@ -21,3 +23,39 @@ export async function memoryList(): Promise<unknown> { const { config } = getSta
 export async function memoryPromote(args: Record<string, unknown>): Promise<unknown> { const { config, db } = getState(); const status = String(args.status ?? "confirmed"); const existing = safePath(config, String(args.path ?? "")); const content = args.content === undefined ? parseMarkdown(readFileSync(existing, "utf8"), config.agent).body : args.content; const result = await memoryUpdate({ ...args, content, status }) as { path: string; status: string }; const row = db.findPath(safePath(config, result.path)); if (row) db.addProvenance(row.id, `status:${status}`, config.agent, row.id); return { ...result, status }; }
 export async function memoryLink(args: Record<string, unknown>): Promise<unknown> { const { db, config } = getState(); const find = (p: unknown) => db.findPath(safePath(config, String(p))); const a = find(args.source); const b = find(args.target); if (!a || !b) throw new Error("source or target memory not found"); db.addRelation(a.id, String(args.relationType), b.id, config.agent); return { source: args.source, target: args.target, relationType: args.relationType }; }
 export async function memoryRestore(args: Record<string, unknown>): Promise<unknown> { if (args.confirm !== true) throw new Error("restore requires confirm=true"); const current = getState(); const backup = `${current.config.dbPath}.bak`; if (!existsSync(backup)) throw new Error("no SQLite backup exists"); current.db.close(); copyFileSync(backup, current.config.dbPath); state = null; process.env.REMME_SKIP_BACKUP = "1"; getState().db.sync(); delete process.env.REMME_SKIP_BACKUP; return { restored: true, path: current.config.dbPath }; }
+
+function validateImportPath(path: string): string {
+  const resolved = resolve(path);
+  if (resolved.includes("..")) throw new Error("path must not contain parent directory traversal");
+  return resolved;
+}
+
+export async function memoryImport(args: Record<string, unknown>): Promise<unknown> {
+  const { config, db } = getState();
+  const sourceType = String(args.sourceType ?? "markdown");
+  const source = args.source ? validateImportPath(String(args.source)) : undefined;
+  const dbPath = args.db ? validateImportPath(String(args.db)) : undefined;
+  if (!source && !dbPath) throw new Error("at least one of source or db must be provided");
+  const embedding = String(args.embedding ?? "skip") as "auto" | "reuse" | "rebuild" | "skip";
+  const dryRun = args.dryRun === true;
+  const includeSystem = args.includeSystem === true;
+  const importer = getImporter(sourceType, config, db, embed, { source, db: dbPath, embedding, dryRun, includeSystem });
+  return importer.import();
+}
+
+export async function memoryImportStatus(args: Record<string, unknown>): Promise<unknown> {
+  const { db } = getState();
+  const importId = args.importId ? String(args.importId) : undefined;
+  return { imports: db.importStatus(importId) };
+}
+
+export async function memoryImportRollback(args: Record<string, unknown>): Promise<unknown> {
+  if (args.confirm !== true) throw new Error("rollback requires confirm=true");
+  const { config, db } = getState();
+  const importId = String(args.importId ?? "");
+  if (!importId) throw new Error("importId is required");
+  const result = db.rollbackImport(importId);
+  const importDir = join(config.memoryDir, "imports", "openclaw");
+  if (existsSync(importDir)) rmSync(importDir, { recursive: true, force: true });
+  return { importId, status: "rolled-back", removedChunks: result.removedChunks, removedSources: result.removedSources };
+}

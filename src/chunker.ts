@@ -7,6 +7,15 @@ export interface MemoryMetadata {
   agent: string;
   created: string;
   entities: string[];
+  origin?: string;
+  importId?: string;
+  source?: string;
+  originalPath?: string;
+  category?: string;
+  sourceId?: number;
+  embeddingDims?: number;
+  embeddingModel?: string;
+  originalRecordId?: string;
 }
 
 export interface Chunk { text: string; startLine: number; endLine: number; metadata: MemoryMetadata; }
@@ -26,6 +35,7 @@ export function parseMarkdown(source: string, fallbackAgent = "unknown"): { meta
       importance: Number.isFinite(importance) ? Math.min(10, Math.max(1, importance)) : 5,
       tags: list("tags"), knowledgeType: get("knowledgeType"), status: get("status") ?? "candidate",
       project: get("project"), agent: get("agent") ?? fallbackAgent, created: get("created") ?? new Date().toISOString(), entities: list("entities"),
+      origin: get("origin") ?? "native", importId: get("importId"), source: get("source"), originalPath: get("originalPath"), category: get("category"),
     },
     body: match?.[2] ?? source,
   };
@@ -33,7 +43,9 @@ export function parseMarkdown(source: string, fallbackAgent = "unknown"): { meta
 
 export function renderMarkdown(content: string, metadata: Partial<MemoryMetadata>, agent: string): string {
   const created = metadata.created ?? new Date().toISOString();
-  const lines = ["---", `importance: ${metadata.importance ?? 5}`, `tags: ${JSON.stringify(metadata.tags ?? [])}`, `knowledgeType: ${metadata.knowledgeType ?? "observation"}`, `status: ${metadata.status ?? "candidate"}`, `project: ${metadata.project ?? ""}`, `created: ${created}`, `agent: ${metadata.agent ?? agent}`, `entities: ${JSON.stringify(metadata.entities ?? [])}`, "---", "", content.trim(), ""];
+  const lines = ["---", `importance: ${metadata.importance ?? 5}`, `tags: ${JSON.stringify(metadata.tags ?? [])}`, `knowledgeType: ${metadata.knowledgeType ?? "observation"}`, `status: ${metadata.status ?? "candidate"}`, `project: ${metadata.project ?? ""}`, `created: ${created}`, `agent: ${metadata.agent ?? agent}`, `entities: ${JSON.stringify(metadata.entities ?? [])}`];
+  if (metadata.origin === "imported") { lines.push(`origin: imported`, `importId: ${metadata.importId ?? ""}`, `source: ${metadata.source ?? ""}`, `originalPath: ${metadata.originalPath ?? ""}`, `category: ${metadata.category ?? ""}`); }
+  lines.push("---", "", content.trim(), "");
   return lines.join("\n");
 }
 

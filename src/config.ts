@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 export interface Config {
   dbPath: string;
   memoryDir: string;
+  importsDir: string;
   embeddingModel: string;
   vectorWeight: number;
   textWeight: number;
@@ -17,6 +18,7 @@ export interface Config {
 const defaults: Config = {
   dbPath: join(homedir(), ".remme", "memory.db"),
   memoryDir: join(homedir(), ".remme", "memory"),
+  importsDir: join(homedir(), ".remme", "imports"),
   embeddingModel: "Xenova/all-MiniLM-L6-v2",
   vectorWeight: 0.7,
   textWeight: 0.3,
@@ -37,11 +39,13 @@ export function loadConfig(cwd = process.cwd()): Config {
     ...value,
     dbPath: resolve(value.dbPath),
     memoryDir: resolve(value.memoryDir),
+    importsDir: resolve(value.importsDir),
     agent: process.env.REMME_AGENT ?? value.agent,
   };
 }
 
 export function ensureConfigDirs(config: Config): void {
   mkdirSync(config.memoryDir, { recursive: true });
+  mkdirSync(config.importsDir, { recursive: true });
   mkdirSync(join(config.dbPath, ".."), { recursive: true });
 }
