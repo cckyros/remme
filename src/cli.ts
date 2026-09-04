@@ -63,4 +63,19 @@ else if (command === "import") {
     }
   }
 }
+else if (command === "embed") {
+  const config = loadConfig(); ensureConfigDirs(config); const db = new MemoryDatabase(config);
+  const missing = db.db.prepare("SELECT id, text FROM memory_chunks WHERE embedding IS NULL").all() as { id: number; text: string }[];
+  if (!missing.length) { console.log("all chunks already have embeddings"); db.close(); }
+  else {
+    console.log(`backfilling embeddings for ${missing.length} chunks...`);
+    let done = 0; let failed = 0;
+    for (const chunk of missing) {
+      try { const vec = await embed(chunk.text, config.embeddingModel); db.setChunkEmbedding(chunk.id, vec, config.embeddingModel, vec.length); done++; if (done % 50 === 0) console.log(`  ${done}/${missing.length}`); }
+      catch { failed++; }
+    }
+    console.log(`done: ${done}, failed: ${failed}`);
+    db.close();
+  }
+}
 else { console.error(`unknown command: ${command}`); process.exitCode = 1; }
