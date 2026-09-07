@@ -7,7 +7,7 @@
 当前版本是可运行的 pre-alpha MVP：
 
 - MCP stdio server 可独立运行
-- 支持 memory CRUD、hybrid search、知识提升、关系链、provenance 和 SQLite restore
+- 支持 memory CRUD、hybrid search、知识提升、关系链、provenance 和 SQLite 备份验证/离线恢复
 - 默认使用本地 Transformers.js embedding，embedding 不可用时降级到 FTS-only
 - 已验证 Claude Code、Codex、Cursor、OpenClaw 和 Devin 本地 MCP 入口
 - 规划 22 个平台适配目标，当前实现并验证 4 个
@@ -16,9 +16,7 @@
 
 - [`docs/SPEC.md`](docs/SPEC.md)：功能规格、数据模型、MCP 工具和测试决策
 - [`docs/PLATFORM-ADAPTATION.md`](docs/PLATFORM-ADAPTATION.md)：平台适配架构和当前/规划范围
-- [`docs/openclaw-investigation.md`](docs/openclaw-investigation.md)：OpenClaw memory search 调查
-- [`CONTEXT.md`](CONTEXT.md)：领域术语和设计上下文
-- [`AGENTS.md`](AGENTS.md)：开发工作流、Skill 使用和验收规则
+- [`docs/OPENCLAW-IMPORT-DESIGN.md`](docs/OPENCLAW-IMPORT-DESIGN.md)：OpenClaw 导入设计和幂等/回滚策略
 
 ## 快速开始
 
@@ -112,7 +110,7 @@ Windows 示例：`C:/Users/<user>/.remme/memory.db`。
 - `memory_link`：建立支持、修正、替代和来源关系
 - `memory_read`：读取全文、关系和 provenance
 - `memory_list`：列出记忆文件
-- `memory_restore`：在 `confirm=true` 时恢复 SQLite 备份
+- `memory_restore`：在 `confirm=true` 时验证 SQLite 备份完整性，拒绝在线替换并指导离线恢复
 
 remme 的搜索是被动的：MCP 搜索结果会进入当前 Agent 上下文，但不会自动写回长期记忆。需要长期保存时，Agent 必须显式调用 `memory_write` 或 `memory_update`。
 
@@ -131,7 +129,7 @@ npm run verify
 - SQLite schema、FTS5、sqlite-vec 加载和 provenance
 - memory CRUD、知识提升和关系读取
 - CJK 短查询和 FTS-only fallback
-- SQLite backup/restore
+- SQLite backup/离线 restore 验证
 - 独立进程 MCP stdio 黑盒测试
 - 平台安装器 dry-run
 

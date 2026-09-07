@@ -688,16 +688,16 @@ No files were written.
 
 ## memory_restore 与导入的关系
 
-`memory_restore` 恢复 SQLite 到启动前备份状态。如果备份后有导入操作，restore 会丢失导入的 chunk 数据，但 `memory/imports/openclaw/` 下的 Markdown 文件仍然存在。
+`memory_restore` 验证 SQLite 备份完整性后拒绝在线替换，要求停止所有 remme 客户端后离线恢复。离线恢复会丢失备份后导入的 chunk 数据，但 `memory/imports/openclaw/` 下的 Markdown 文件仍然存在。
 
-restore 后行为：
+离线 restore 后行为：
 
 1. SQLite 中导入的 chunk 消失
 2. 下次 `sync()` 递归扫描 `memory/imports/openclaw/`，发现 Markdown 文件存在但 SQLite 中没有对应 chunk
 3. sync() 重新索引这些文件（保留 `origin=imported` 元数据从 frontmatter 读取）
 4. `memory_imports` 表状态可能丢失（如果在备份后创建），但 chunk 会被重建
 
-文档中明确：`memory_restore` 恢复 SQLite 索引，不删除导入的 Markdown 文件。导入的 Markdown 是 source of truth，SQLite 索引可重建。
+文档中明确：`memory_restore` 仅验证备份并指导离线恢复，不在线替换 SQLite 索引，不删除导入的 Markdown 文件。导入的 Markdown 是 source of truth，SQLite 索引可重建。
 
 ## 幂等、备份和失败恢复
 

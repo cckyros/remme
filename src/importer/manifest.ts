@@ -1,6 +1,6 @@
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 export interface ImportManifest {
   id: string;
@@ -36,6 +36,6 @@ export function hashContent(content: string): string {
 
 export function generateImportId(sourceType: string): string {
   const date = new Date().toISOString().replace(/[:.]/g, "").slice(0, 15);
-  const rand = Math.random().toString(36).slice(2, 5);
+  const rand = randomUUID();
   return `${sourceType}-${date}-${rand}`;
 }

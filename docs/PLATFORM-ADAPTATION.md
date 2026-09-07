@@ -395,7 +395,7 @@ src/plugin/openclaw-plugin.ts → openclaw-dist/  [remme 按需]
 ### 阶段 2：业务层实现
 
 - `src/plugin/manifest.ts` — remme 身份声明（见上文）
-- `src/plugin/tools.ts` — MCP 工具定义（当前 8 个：search/write/update/promote/link/read/list/restore）
+- `src/plugin/tools.ts` — MCP 工具定义（规划 11 个：search/write/update/promote/link/read/list/restore/import/import_status/import_rollback；当前实现位于 `src/tools.ts`）
 - `src/plugin/targets/index.ts` — 适配器注册（当前 4 个，目标 22 个）
 - `src/plugin/targets/native-*.ts` — native 适配器（当前 Claude Code、Codex）
 - `src/plugin/targets/skill-agents.ts` — skill 适配器（待实现）
@@ -408,7 +408,7 @@ src/plugin/openclaw-plugin.ts → openclaw-dist/  [remme 按需]
 - `src/embedding.ts` — Transformers.js embedding
 - `src/search.ts` — hybrid search 管线
 - `src/chunker.ts` — Markdown 分块 + frontmatter 解析
-- `src/backup.ts` — 备份和恢复
+- `src/backup.ts` — 备份和恢复（实际集成在 `database.ts` 中，无独立文件）
 
 ### 阶段 4：构建和测试
 

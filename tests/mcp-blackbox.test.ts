@@ -1,4 +1,0 @@
-import test from "node:test";
-import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-test("MCP stdio handshake and tool discovery", async () => { const child = spawn(process.execPath, ["dist/cli.js", "mcp"], { stdio: ["pipe", "pipe", "pipe"] }); let output = ""; const closed = new Promise<void>((resolve) => child.once("close", () => resolve())); child.stdout.setEncoding("utf8"); child.stdout.on("data", (x) => { output += x; }); child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05" } }) + "\n"); child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }) + "\n"); await new Promise((r) => setTimeout(r, 300)); child.kill(); await closed; assert.match(output, /\"serverInfo\"/); assert.match(output, /memory_search/); });

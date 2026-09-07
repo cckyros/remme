@@ -17,7 +17,7 @@ remme 是一个 stdio MCP server，用 SQLite + sqlite-vec + Transformers.js 实
 - **知识沉淀**：原始工作记录可以被标记为决策、解决方案、坑、约束或模式，逐步从临时记忆变成可复用知识
 - **跨 Agent 共享**：多个 MCP client 连同一个 remme，共享同一个 SQLite 文件和 memory 目录
 - **决策链追踪**：记录哪一个 Agent 在什么项目中产生、验证、修正或替代了某条知识，支持从问题追溯到方案和验证结果
-- **记忆恢复**：启动时备份 SQLite 文件，提供 `memory_restore` 工具恢复到上次会话前状态
+- **记忆恢复**：启动时备份 SQLite 文件，提供 `memory_restore` 工具验证备份并指导离线恢复
 
 ## User Stories
 
@@ -96,7 +96,7 @@ remme 是一个 stdio MCP server，用 SQLite + sqlite-vec + Transformers.js 实
 
 46. 作为 agent，我想要向量搜索和关键词搜索并行执行并合并结果，以便同时匹配语义和精确词
 47. 作为 agent，我想要 importance 分数作为搜索排名乘数，以便重要记忆优先
-48. 作为 agent，我想要 MMR 多样性重排减少重复结果，以便看到更多样的记忆
+48. 作为 agent，我想要 Jaccard 去重减少重复结果，以便看到更多样的记忆
 49. 作为 agent，我想要中文/日文/韩文关键词能被正确搜索，以便 CJK 记忆可检索
 
 ## Implementation Decisions
@@ -155,7 +155,7 @@ Hybrid search 管线（借鉴 openclaw 简化版）：
    - 关键词搜索：query → FTS5 BM25（trigram 分词，<3 字符 CJK 用 LIKE fallback）
 2. **加权合并**：`contentScore = vectorWeight * vectorScore + textWeight * keywordScore`（默认 0.7/0.3）
 3. **Importance 乘数**：`score *= (0.75 + importance * 0.05)`（1分=0.8x，10分=1.25x，null=1.0x）
-4. **MMR 多样性重排**：`λ * relevance - (1-λ) * max_similarity`（默认 λ=0.7，Jaccard 相似度）
+4. **Jaccard 去重**：基于 Unicode/CJK 感知的 token Jaccard 相似度过滤重复结果（非真正 MMR；`mmrEnabled` 控制是否启用去重）
 5. **结果选择**：按 minScore 过滤，取 top maxResults
 
 搜索空间优化：
@@ -179,8 +179,8 @@ Hybrid search 管线（借鉴 openclaw 简化版）：
 | `memory_promote` | path (必填), status?, knowledgeType?, confirm? | 将候选记忆提升为可复用知识，并记录 provenance 事件 |
 | `memory_link` | source (必填), target (必填), relationType (必填) | 建立两条记忆/知识之间的支持、修正、替代或来源关系 |
 | `memory_read` | path (必填) | 读取指定记忆文件全文、来源和关系 |
-| `memory_list` | limit?, knowledgeType?, status?, project? | 列出记忆或知识文件 |
-| `memory_restore` | confirm (必填, true) | 恢复 SQLite 到启动时备份的状态 |
+| `memory_list` | limit?, knowledgeType?, status?, project?, agent?, tags? | 列出记忆或知识文件（支持过滤和分页） |
+| `memory_restore` | confirm (必填, true) | 验证 SQLite 备份完整性，拒绝在线替换并指导离线恢复 |
 
 工具设计原则：知识沉淀通过 Agent 显式提供类型、状态和关系完成，不在每次写入时强制调用内部 LLM。`memory_promote` 和 `memory_link` 将沉淀与关联变成单独、可审计的操作。
 
@@ -284,10 +284,10 @@ Cursor 完成验证
 
 ### 备份恢复
 
-- **备份时机**：remme 进程启动时，复制 `memory.db` 到 `memory.db.bak`（只保留一份）
+- **备份时机**：remme 进程启动时，序列化 `memory.db`（含 WAL 已提交数据）到 `memory.db.bak`（只保留一份）
 - **备份内容**：只备份 SQLite 文件（Markdown 是 source of truth，用户可自行管理）
-- **恢复方式**：`memory_restore` MCP 工具（需 `confirm: true`）或 CLI `remme restore`
-- **恢复语义**：恢复到上次 remme 进程启动前的 SQLite 状态
+- **恢复方式**：`memory_restore` MCP 工具（需 `confirm: true`）验证备份完整性后拒绝在线替换；用户须停止所有 remme 客户端，离线将 `memory.db.bak` 复制为 `memory.db`，再重新启动
+- **恢复语义**：SQLite 索引恢复到上次 remme 进程启动前的状态；Markdown 文件和备份后的写入不被回滚
 
 ### 配置
 
@@ -312,21 +312,23 @@ Cursor 完成验证
 | `remme init` | 交互式初始化配置 |
 | `remme reindex` | 强制重建索引 |
 | `remme status` | 显示索引状态 |
-| `remme restore` | 从备份恢复 SQLite |
+| `remme restore` | 验证备份并指导离线恢复 SQLite |
 
 ### 项目结构
 
 ```
 src/
-├── index.ts          # MCP server 入口 + CLI 分发
-├── database.ts       # SQLite + sqlite-vec + FTS5 schema 和操作
+├── cli.ts            # MCP server 入口 + CLI 分发
+├── database.ts       # SQLite + sqlite-vec + FTS5 schema、操作、备份和恢复
 ├── embedding.ts      # Transformers.js embedding 生成和缓存
-├── search.ts         # hybrid search 管线（merge + importance + MMR）
-├── chunker.ts        # Markdown 分块 + frontmatter 解析
-├── tools.ts          # MCP 工具实现（search/write/update/promote/link/read/list/restore）
+├── search.ts         # hybrid search 管线（merge + importance + Jaccard 去重）
+├── chunker.ts        # Markdown 分块 + frontmatter 解析和序列化
+├── tools.ts          # MCP 工具实现（search/write/update/promote/link/read/list/restore/import/rollback）
 ├── config.ts         # 配置加载（JSON 文件 + 默认值）
-├── backup.ts         # 备份和恢复
-└── cli.ts            # CLI 命令（init/reindex/status/restore）
+├── mcp-runtime.ts    # MCP stdio 传输和工具调度
+├── importer/         # 导入器（base, markdown, openclaw, manifest, classifier, registry, schema）
+├── framework/        # 平台适配框架（registry）
+└── plugin/           # 插件声明（manifest）
 ```
 
 ### 依赖
@@ -346,7 +348,7 @@ src/
 ### 测试缝
 
 1. **数据库层**（`database.ts`）：直接测试 SQLite schema 创建、FTS5 查询、sqlite-vec KNN、过滤逻辑。用临时 SQLite 文件，不需要 mock。
-2. **搜索管线**（`search.ts`）：测试 hybrid merge、importance 乘数、MMR 重排。纯函数测试，输入是向量结果 + 关键词结果，输出是排序后的结果列表。不需要真实 embedding。
+2. **搜索管线**（`search.ts`）：测试 hybrid merge、importance 乘数、Jaccard 去重。纯函数测试，输入是向量结果 + 关键词结果，输出是排序后的结果列表。不需要真实 embedding。
 3. **Embedding 层**（`embedding.ts`）：测试模型加载、向量生成、维度一致性、缓存命中/未命中。用 mock 返回固定向量避免依赖模型下载。
 4. **MCP 工具层**（`tools.ts`）：测试工具 schema 验证、参数处理、错误处理、降级行为。mock database 和 embedding 层。
 5. **端到端**：写入记忆 → 搜索记忆 → 验证结果。用真实 SQLite + mock embedding（固定向量），覆盖完整流程。
@@ -368,10 +370,10 @@ src/
 - 多个 Agent 依次写入、验证和修正同一主题 → 能按来源 Agent 还原决策链
 - 更新或废弃旧知识 → 新知识可召回，旧知识标记为 superseded/obsolete 且来源不丢失
 - 写入记忆 → 按 importance 排序正确
-- 写入多条相似记忆 → MMR 减少重复
+- 写入多条相似记忆 → Jaccard 去重减少重复
 - embedding 不可用 → 降级到 FTS-only，结果标注 mode
 - 文件手动修改 → 搜索时自动检测并增量更新索引
-- 启动备份 → restore 恢复到备份状态
+- 启动备份 → restore 验证备份并指导离线恢复
 - 切换 embedding 模型 → 检测维度变化，标记需要重建
 
 ## Out of Scope
@@ -395,7 +397,7 @@ src/
 
 ### 与 openclaw memory 的关系
 
-remme 借鉴了 openclaw 的核心设计（SQLite schema 分离、hybrid search 管线、importance 乘数、MMR、temporal decay 概念），但做了有边界的简化：
+remme 借鉴了 openclaw 的核心设计（SQLite schema 分离、hybrid search 管线、importance 乘数、Jaccard 去重、temporal decay 概念），但做了有边界的简化：
 - 去掉 plugin SDK 边界（单一程序）
 - 不索引完整 session memory，但记录跨 Agent 的来源和 provenance 事件
 - 不做复杂的 project ranking，但支持 project 过滤和关联

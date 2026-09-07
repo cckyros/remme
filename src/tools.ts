@@ -1,63 +1,234 @@
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import Database from "better-sqlite3";
 import { loadConfig, ensureConfigDirs, type Config } from "./config.ts";
-import { MemoryDatabase } from "./database.ts";
+import { MemoryDatabase, type SearchFilters } from "./database.ts";
 import { embed } from "./embedding.ts";
-import { parseMarkdown, renderMarkdown } from "./chunker.ts";
+import { parseMarkdown, renderMarkdown, type MemoryMetadata } from "./chunker.ts";
 import { rankResults, type SearchItem } from "./search.ts";
-import { OpenClawImporter } from "./importer/openclaw.ts";
-import { getImporter, availableImporters } from "./importer/registry.ts";
+import { getImporter } from "./importer/registry.ts";
 
 let state: { config: Config; db: MemoryDatabase } | null = null;
 export function closeMemoryStore(): void { state?.db.close(); state = null; }
-function getState() { if (!state) { const config = loadConfig(); ensureConfigDirs(config); state = { config, db: new MemoryDatabase(config) }; state.db.sync(); } return state; }
-function safePath(config: Config, path: string): string { const root = resolve(config.memoryDir); const target = resolve(root, path); if (target !== root && !target.startsWith(root + "\\") && !target.startsWith(root + "/")) throw new Error("path must stay inside memory directory"); return target; }
-function parseTags(value: unknown): string[] { return Array.isArray(value) ? value.map(String) : []; }
-
-export async function memorySearch(args: Record<string, unknown>): Promise<unknown> { const { config, db } = getState(); db.quickSync(); const query = String(args.query ?? ""); const q = await embed(query, config.embeddingModel).catch(() => null); const textRows = db.searchText(query); const textMap = new Map<number, { row: typeof textRows[number]; score: number }>(); for (let i = 0; i < textRows.length; i++) textMap.set(textRows[i].id, { row: textRows[i], score: 1 - i / 100 }); const vectorRows = q ? db.searchVector(q) : []; const vectorMap = new Map<number, { row: typeof vectorRows[number]["row"]; score: number }>(); for (const v of vectorRows) vectorMap.set(v.row.id, { row: v.row, score: v.score }); const ids = new Set<number>(); for (const id of textMap.keys()) ids.add(id); for (const id of vectorMap.keys()) ids.add(id); const items: SearchItem[] = [...ids].map((id) => { const row = (textMap.get(id)?.row ?? vectorMap.get(id)?.row)!; const vs = vectorMap.get(id)?.score ?? 0; const ts = textMap.get(id)?.score ?? 0; const hasVector = vectorMap.has(id); const hasText = textMap.has(id); const baseScore = hasVector && hasText ? (config.vectorWeight * vs + config.textWeight * ts) : hasVector ? vs : ts; return { id, path: relative(config.memoryDir, row.path), snippet: row.text, score: baseScore * (0.75 + row.importance * 0.05), vectorScore: vs, textScore: ts, importance: row.importance, tags: JSON.parse(row.tags), status: row.status, knowledgeType: row.knowledge_type ?? undefined, project: row.project ?? undefined, agent: row.agent, startLine: row.start_line, endLine: row.end_line }; }).filter((x) => x.score >= Number(args.threshold ?? config.minScore)).filter((x) => !args.project || x.project === args.project).filter((x) => !args.agent || x.agent === args.agent).filter((x) => !args.knowledgeType || x.knowledgeType === args.knowledgeType).filter((x) => !args.status || x.status === args.status).filter((x) => !args.tags || parseTags(args.tags).every((tag) => x.tags.includes(tag))); return { results: rankResults(items, config.mmrEnabled).slice(0, Number(args.limit ?? config.maxResults)), mode: q ? "hybrid" : "fts-only" }; }
-
-export async function memoryWrite(args: Record<string, unknown>): Promise<unknown> { const { config, db } = getState(); const now = new Date(); const monthDir = join(config.memoryDir, now.toISOString().slice(0, 7)); mkdirSync(monthDir, { recursive: true }); const name = `${now.toISOString().replace(/[:.]/g, "-")}-${Math.random().toString(36).slice(2, 7)}.md`; const path = join(monthDir, name); writeFileSync(path, renderMarkdown(String(args.content ?? ""), { importance: Number(args.importance ?? 5), tags: parseTags(args.tags), knowledgeType: args.knowledgeType ? String(args.knowledgeType) : undefined, status: args.status ? String(args.status) : "candidate", project: args.project ? String(args.project) : undefined, entities: parseTags(args.entities) }, config.agent)); db.indexFile(path); await embed(String(args.content ?? ""), config.embeddingModel).then((vector) => db.setEmbedding(path, vector)).catch(() => {}); return { path: join(now.toISOString().slice(0, 7), name), status: "created" }; }
-export async function memoryUpdate(args: Record<string, unknown>): Promise<unknown> { const { config, db } = getState(); const path = safePath(config, String(args.path ?? "")); if (!existsSync(path)) throw new Error("memory file not found"); writeFileSync(path, renderMarkdown(String(args.content ?? ""), { importance: Number(args.importance ?? 5), tags: parseTags(args.tags), knowledgeType: args.knowledgeType ? String(args.knowledgeType) : undefined, status: args.status ? String(args.status) : "candidate", project: args.project ? String(args.project) : undefined, entities: parseTags(args.entities) }, config.agent)); db.indexFile(path); await embed(String(args.content ?? ""), config.embeddingModel).then((vector) => db.setEmbedding(path, vector)).catch(() => {}); return { path: String(args.path), status: "updated" }; }
-export async function memoryRead(args: Record<string, unknown>): Promise<unknown> { const { config, db } = getState(); const path = String(args.path ?? ""); const full = safePath(config, path); if (!existsSync(full)) throw new Error("memory file not found"); const id = db.findPath(full)?.id ?? -1; return { path, content: readFileSync(full, "utf8"), relations: db.relations(id), provenance: db.provenance(id) }; }
-export async function memoryList(): Promise<unknown> { const { config } = getState(); const files: string[] = []; const scan = (dir: string, prefix: string) => { for (const entry of readdirSync(dir, { withFileTypes: true })) { if (entry.name.startsWith(".")) continue; const full = join(dir, entry.name); const rel = prefix ? `${prefix}/${entry.name}` : entry.name; if (entry.isDirectory()) scan(full, rel); else if (entry.name.endsWith(".md")) files.push(rel); } }; scan(config.memoryDir, ""); return { files }; }
-export async function memoryPromote(args: Record<string, unknown>): Promise<unknown> { const { config, db } = getState(); const status = String(args.status ?? "confirmed"); const existing = safePath(config, String(args.path ?? "")); const content = args.content === undefined ? parseMarkdown(readFileSync(existing, "utf8"), config.agent).body : args.content; const result = await memoryUpdate({ ...args, content, status }) as { path: string; status: string }; const row = db.findPath(safePath(config, result.path)); if (row) db.addProvenance(row.id, `status:${status}`, config.agent, row.id); return { ...result, status }; }
-export async function memoryLink(args: Record<string, unknown>): Promise<unknown> { const { db, config } = getState(); const find = (p: unknown) => db.findPath(safePath(config, String(p))); const a = find(args.source); const b = find(args.target); if (!a || !b) throw new Error("source or target memory not found"); db.addRelation(a.id, String(args.relationType), b.id, config.agent); return { source: args.source, target: args.target, relationType: args.relationType }; }
-export async function memoryRestore(args: Record<string, unknown>): Promise<unknown> { if (args.confirm !== true) throw new Error("restore requires confirm=true"); const current = getState(); const backup = `${current.config.dbPath}.bak`; if (!existsSync(backup)) throw new Error("no SQLite backup exists"); current.db.close(); copyFileSync(backup, current.config.dbPath); state = null; process.env.REMME_SKIP_BACKUP = "1"; getState().db.sync(); delete process.env.REMME_SKIP_BACKUP; return { restored: true, path: current.config.dbPath }; }
-
-function validateImportPath(path: string): string {
-  const resolved = resolve(path);
-  if (resolved.includes("..")) throw new Error("path must not contain parent directory traversal");
-  return resolved;
+function getState() {
+  if (!state) {
+    const config = loadConfig();
+    ensureConfigDirs(config);
+    const db = new MemoryDatabase(config);
+    try { db.sync(); state = { config, db }; } catch (error) { db.close(); throw error; }
+  }
+  return state;
+}
+function safePath(config: Config, path: string): string {
+  const root = realpathSync(config.memoryDir);
+  const target = resolve(root, path);
+  const actual = existsSync(target) ? realpathSync(target) : resolve(realpathSync(dirname(target)), target.slice(dirname(target).length + 1));
+  const rel = relative(root, actual);
+  if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error("path must stay inside memory directory");
+  return target;
+}
+function requiredString(args: Record<string, unknown>, key: string): string {
+  if (typeof args[key] !== "string" || !args[key].trim()) throw new Error(`${key} must be a non-empty string`);
+  return args[key];
+}
+function boundedInteger(value: unknown, fallback: number, max: number): number {
+  const number = value === undefined ? fallback : value;
+  if (typeof number !== "number" || !Number.isInteger(number) || number < 1 || number > max) throw new Error(`limit must be an integer between 1 and ${max}`);
+  return number;
+}
+function parseTags(value: unknown): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) throw new Error("tags/entities must be arrays of strings");
+  return value;
+}
+function searchFilters(args: Record<string, unknown>): SearchFilters {
+  const filters: SearchFilters = {};
+  for (const key of ["project", "agent", "knowledgeType", "status", "entity", "dateFrom", "dateTo"] as const) {
+    if (args[key] !== undefined) filters[key] = requiredString(args, key);
+  }
+  for (const key of ["dateFrom", "dateTo"] as const) {
+    if (filters[key] && !Number.isFinite(Date.parse(filters[key]!))) throw new Error(`${key} must be an ISO date`);
+  }
+  if (filters.dateFrom && filters.dateTo && Date.parse(filters.dateFrom) > Date.parse(filters.dateTo)) throw new Error("dateFrom must not be after dateTo");
+  if (args.tags !== undefined) filters.tags = parseTags(args.tags);
+  return filters;
+}
+function metadataChanges(args: Record<string, unknown>): Partial<MemoryMetadata> {
+  const metadata: Partial<MemoryMetadata> = {};
+  if (args.importance !== undefined) {
+    if (typeof args.importance !== "number" || !Number.isFinite(args.importance) || args.importance < 1 || args.importance > 10) throw new Error("importance must be between 1 and 10");
+    metadata.importance = args.importance;
+  }
+  for (const key of ["tags", "entities"] as const) if (args[key] !== undefined) metadata[key] = parseTags(args[key]);
+  for (const key of ["knowledgeType", "status", "project"] as const) if (args[key] !== undefined) {
+    if (typeof args[key] !== "string") throw new Error(`${key} must be a string`);
+    metadata[key] = args[key];
+  }
+  if (metadata.status && !["candidate", "confirmed", "verified", "superseded", "obsolete"].includes(metadata.status)) throw new Error("invalid knowledge status");
+  if (metadata.knowledgeType && !["observation", "decision", "solution", "pitfall", "constraint", "pattern", "procedure", "question"].includes(metadata.knowledgeType)) throw new Error("invalid knowledgeType");
+  if (args.relations !== undefined) throw new Error("use memory_link to create relations");
+  return metadata;
+}
+function atomicWrite(path: string, content: string): void {
+  const temporary = `${path}.${randomUUID()}.tmp`;
+  try { writeFileSync(temporary, content, { encoding: "utf8", flag: "wx" }); renameSync(temporary, path); }
+  finally { if (existsSync(temporary)) rmSync(temporary); }
+}
+async function embedFile(db: MemoryDatabase, config: Config, path: string): Promise<string> {
+  const chunks = db.chunksForPath(path);
+  try {
+    for (const chunk of chunks) {
+      if (chunk.embedding && chunk.embedding_model === config.embeddingModel) continue;
+      const vector = await embed(chunk.text, config.embeddingModel);
+      const current = db.chunksForPath(path).find((row) => row.id === chunk.id);
+      if (current?.text === chunk.text) db.setChunkEmbedding(chunk.id, vector, config.embeddingModel, vector.length);
+    }
+    return "ready";
+  } catch { return "unavailable"; }
 }
 
-export async function memoryImport(args: Record<string, unknown>): Promise<unknown> {
+export async function memorySearch(args: Record<string, unknown>): Promise<unknown> {
+  const query = requiredString(args, "query");
+  const filters = searchFilters(args);
   const { config, db } = getState();
-  const sourceType = String(args.sourceType ?? "markdown");
-  const source = args.source ? validateImportPath(String(args.source)) : undefined;
-  const dbPath = args.db ? validateImportPath(String(args.db)) : undefined;
+  const limit = boundedInteger(args.limit, config.maxResults, 100);
+  const threshold = args.threshold ?? config.minScore;
+  if (typeof threshold !== "number" || !Number.isFinite(threshold)) throw new Error("threshold must be finite");
+  db.quickSync();
+  const candidateLimit = Math.min(500, Math.max(100, limit * 5));
+  const queryVector = embed(query, config.embeddingModel).catch(() => null);
+  const textRows = db.searchText(query, filters, candidateLimit);
+  const q = await queryVector;
+  const vectorRows = q ? db.searchVector(q, filters, candidateLimit, config.embeddingModel) : [];
+  const textMap = new Map(textRows.map((item) => [item.row.id, item]));
+  const vectorMap = new Map(vectorRows.map((item) => [item.row.id, item]));
+  const ids = new Set([...textMap.keys(), ...vectorMap.keys()]);
+  const items: SearchItem[] = [...ids].map((id) => {
+    const row = (textMap.get(id)?.row ?? vectorMap.get(id)?.row)!;
+    const vectorScore = vectorMap.get(id)?.score ?? 0;
+    const textScore = textMap.get(id)?.score ?? 0;
+    const score = (config.vectorWeight * vectorScore + config.textWeight * textScore) * (0.75 + row.importance * 0.05);
+    return { id, path: relative(config.memoryDir, row.path), snippet: row.text, score, vectorScore, textScore, importance: row.importance, tags: JSON.parse(row.tags), status: row.status, knowledgeType: row.knowledge_type ?? undefined, project: row.project ?? undefined, agent: row.agent, created: row.created, startLine: row.start_line, endLine: row.end_line };
+  }).filter((item) => item.score >= threshold);
+  return { results: rankResults(items, config.mmrEnabled, limit), mode: q ? "hybrid" : "text-only", total: items.length, candidateLimit };
+}
+
+export async function memoryWrite(args: Record<string, unknown>): Promise<unknown> {
+  const content = requiredString(args, "content");
+  const metadata = metadataChanges(args);
+  const { config, db } = getState();
+  const month = new Date().toISOString().slice(0, 7);
+  const monthDir = join(config.memoryDir, month);
+  mkdirSync(monthDir, { recursive: true });
+  const name = `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID()}.md`;
+  const path = safePath(config, join(month, name));
+  atomicWrite(path, renderMarkdown(content, metadata, config.agent));
+  db.indexFile(path);
+  const row = db.findPath(path);
+  if (row) db.addProvenance(row.id, "created", config.agent, null);
+  return { path: join(month, name), status: "created", embedding: await embedFile(db, config, path) };
+}
+export async function memoryUpdate(args: Record<string, unknown>): Promise<unknown> {
+  const requested = requiredString(args, "path");
+  const content = requiredString(args, "content");
+  const metadata = metadataChanges(args);
+  const { config, db } = getState();
+  const path = safePath(config, requested);
+  if (!existsSync(path)) throw new Error("memory file not found");
+  const existing = parseMarkdown(readFileSync(path, "utf8"), config.agent);
+  atomicWrite(path, renderMarkdown(content, { ...existing.metadata, ...metadata }, config.agent));
+  db.indexFile(path);
+  const row = db.findPath(path);
+  if (row) db.addProvenance(row.id, "updated", config.agent, null);
+  return { path: requested, status: "updated", embedding: await embedFile(db, config, path) };
+}
+export async function memoryRead(args: Record<string, unknown>): Promise<unknown> {
+  const path = requiredString(args, "path");
+  const { config, db } = getState();
+  const full = safePath(config, path);
+  if (!existsSync(full)) throw new Error("memory file not found");
+  db.quickSync();
+  const id = db.findPath(full)?.id ?? -1;
+  return { path, content: readFileSync(full, "utf8"), relations: db.relations(id), provenance: db.provenance(id) };
+}
+export async function memoryList(args: Record<string, unknown> = {}): Promise<unknown> {
+  const filters = searchFilters(args);
+  const limit = boundedInteger(args.limit, 1000, 10000);
+  const { config, db } = getState();
+  db.quickSync();
+  return { files: db.listPaths(filters, limit).map((path) => relative(config.memoryDir, path)) };
+}
+export async function memoryPromote(args: Record<string, unknown>): Promise<unknown> {
+  const path = requiredString(args, "path");
+  const status = args.status ?? "confirmed";
+  const changes = metadataChanges({ ...args, status });
+  const { config, db } = getState();
+  const full = safePath(config, path);
+  const existing = parseMarkdown(readFileSync(full, "utf8"), config.agent);
+  atomicWrite(full, renderMarkdown(existing.body, { ...existing.metadata, ...changes }, config.agent));
+  db.indexFile(full);
+  const row = db.findPath(full);
+  if (row) db.addProvenance(row.id, `status:${status}`, config.agent, row.id);
+  return { path, status };
+}
+export async function memoryLink(args: Record<string, unknown>): Promise<unknown> {
+  const source = requiredString(args, "source");
+  const target = requiredString(args, "target");
+  const relationType = requiredString(args, "relationType");
+  if (!["derived_from", "supports", "corrects", "supersedes", "verifies", "related_to"].includes(relationType)) throw new Error("invalid relationType");
+  const { db, config } = getState();
+  db.quickSync();
+  const a = db.findPath(safePath(config, source));
+  const b = db.findPath(safePath(config, target));
+  if (!a || !b) throw new Error("source or target memory not found");
+  db.addRelation(a.id, relationType, b.id, config.agent);
+  return { source, target, relationType };
+}
+export async function memoryRestore(args: Record<string, unknown>): Promise<unknown> {
+  if (args.confirm !== true) throw new Error("restore requires confirm=true");
+  const current = getState();
+  const backup = `${current.config.dbPath}.bak`;
+  if (!existsSync(backup)) throw new Error("no SQLite backup exists");
+  const snapshot = new Database(backup, { readonly: true, fileMustExist: true });
+  try {
+    if (snapshot.pragma("integrity_check", { simple: true }) !== "ok") throw new Error("SQLite backup failed integrity check");
+  } finally { snapshot.close(); }
+  throw new Error("in-process restore is disabled: stop all remme clients and restore the verified SQLite snapshot offline; Markdown files and later edits are not reverted");
+}
+
+function validateImportPath(path: string): string { return resolve(path); }
+export async function memoryImport(args: Record<string, unknown>): Promise<unknown> {
+  const sourceType = args.sourceType ?? "markdown";
+  if (sourceType !== "markdown" && sourceType !== "openclaw") throw new Error("unknown sourceType");
+  const source = args.source === undefined ? undefined : validateImportPath(requiredString(args, "source"));
+  const dbPath = args.db === undefined ? undefined : validateImportPath(requiredString(args, "db"));
   if (!source && !dbPath) throw new Error("at least one of source or db must be provided");
-  const embedding = String(args.embedding ?? "skip") as "auto" | "reuse" | "rebuild" | "skip";
-  const dryRun = args.dryRun === true;
-  const includeSystem = args.includeSystem === true;
-  const importer = getImporter(sourceType, config, db, embed, { source, db: dbPath, embedding, dryRun, includeSystem });
+  const embedding = args.embedding ?? "skip";
+  if (embedding !== "auto" && embedding !== "reuse" && embedding !== "rebuild" && embedding !== "skip") throw new Error("invalid embedding mode");
+  const { config, db } = getState();
+  const importer = getImporter(sourceType, config, db, embed, { source, db: dbPath, embedding, dryRun: args.dryRun === true, includeSystem: args.includeSystem === true });
   return importer.import();
 }
-
 export async function memoryImportStatus(args: Record<string, unknown>): Promise<unknown> {
   const { db } = getState();
-  const importId = args.importId ? String(args.importId) : undefined;
-  return { imports: db.importStatus(importId) };
+  return { imports: db.importStatus(args.importId === undefined ? undefined : requiredString(args, "importId")) };
 }
-
 export async function memoryImportRollback(args: Record<string, unknown>): Promise<unknown> {
   if (args.confirm !== true) throw new Error("rollback requires confirm=true");
+  const importId = requiredString(args, "importId");
   const { config, db } = getState();
-  const importId = String(args.importId ?? "");
-  if (!importId) throw new Error("importId is required");
+  const batch = db.importStatus(importId) as { status: string }[];
+  if (!batch.length) throw new Error("import not found");
+  if (["pending", "running"].includes(batch[0].status)) throw new Error("cannot rollback an active import");
+  const paths = db.db.prepare("SELECT path FROM memory_chunks WHERE import_id = ? UNION SELECT path FROM memory_sources WHERE import_id = ?").all(importId, importId) as { path: string }[];
+  const removable: string[] = [];
+  for (const row of paths) {
+    if (!existsSync(row.path)) continue;
+    const path = safePath(config, row.path);
+    const parsed = parseMarkdown(readFileSync(path, "utf8"), config.agent);
+    if (parsed.metadata.importId === importId) removable.push(path);
+  }
+  for (const path of removable) rmSync(path);
   const result = db.rollbackImport(importId);
-  const imports = db.importStatus(importId) as { source_type: string }[];
-  const sourceType = imports[0]?.source_type ?? "openclaw";
-  const importDir = join(config.memoryDir, "imports", sourceType);
-  if (existsSync(importDir)) rmSync(importDir, { recursive: true, force: true });
-  return { importId, status: "rolled-back", removedChunks: result.removedChunks, removedSources: result.removedSources };
+  return { importId, status: "rolled-back", removedChunks: result.removedChunks, removedSources: result.removedSources, removedFiles: removable.length };
 }
