@@ -19,7 +19,7 @@ remme 需要作为一个 MCP 插件适配到所有主流 AI agent 平台。本�
 │  tools.ts     — MCP 工具定义              │
 │  targets/     — 各平台适配器              │
 ├─────────────────────────────────────────┤
-│  框架层 (src/framework/)                 │
+│  安装层 (src/install/)                   │
 │  manifest.ts  — PluginManifest 类型定义   │
 │  registry.ts  — TargetAdapter 契约 + 调度 │
 │  cli.ts       — CLI 骨架（install/uninstall/config/mcp） │
@@ -376,7 +376,7 @@ src/plugin/openclaw-plugin.ts → openclaw-dist/  [remme 按需]
 
 ### 阶段 1：框架层移植
 
-从 `goal-acceptance/src/framework/` 复制以下文件到 `remme/src/framework/`，remme 不需要 hook 相关的文件：
+（原计划，已由 `src/install/` 实现取代）从 `goal-acceptance/src/framework/` 移植以下文件，remme 不需要 hook 相关的文件：
 
 - `manifest.ts` — 类型定义（原样复制）
 - `registry.ts` — TargetAdapter 契约 + 调度（原样复制）
