@@ -3,5 +3,16 @@
   "name": "remme",
   "version": "0.1.0",
   "description": "Local-first MCP knowledge memory with SQLite and cross-agent provenance.",
-  "license": "MIT"
+  "author": {
+    "name": "cckyros"
+  },
+  "homepage": "https://github.com/cckyros/remme",
+  "repository": "https://github.com/cckyros/remme",
+  "keywords": [
+    "remme",
+    "mcp",
+    "agent-plugins",
+    "agent-skills",
+    "memory"
+  ]
 }

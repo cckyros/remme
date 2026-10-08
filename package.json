@@ -9,9 +9,12 @@
   "files": [
     "dist",
     "src",
+    "skills",
     "plugin.json",
     "mcp.json",
+    ".mcp.json",
     "README.md",
+    "README.zh-CN.md",
     "docs"
   ],
   "engines": {

@@ -1,149 +1,202 @@
 # remme
 
-本地优先的 MCP 知识沉淀工具。remme 使用 Markdown 保存人类可读的记忆，使用 SQLite、FTS5 和可选 sqlite-vec 建立本地索引，让 Claude Code、Codex、Cursor、Devin、OpenClaw 等 Agent 共享同一份可追溯知识。
+Local-first MCP memory for AI agents. Markdown files hold the knowledge you can read and edit; a SQLite index makes it searchable; every agent you connect shares the same memory.
 
-## 当前状态
+**English** | [简体中文](README.zh-CN.md)
 
-当前版本是可运行的 pre-alpha MVP：
+> Status: pre-alpha. The MCP server works and is covered by stdio tests. The installer's main config formats are covered by component tests; live runs inside each client are not verified for every target.
 
-- MCP stdio server 可独立运行
-- 支持 memory CRUD、hybrid search、知识提升、关系链、provenance 和 SQLite 备份验证/离线恢复
-- 默认使用本地 Transformers.js embedding，embedding 不可用时降级到 FTS-only
-- 已验证 Claude Code、Codex、Cursor、OpenClaw 和 Devin 本地 MCP 入口
-- 规划 22 个平台适配目标，当前实现并验证 4 个
+## Features
 
-详细设计见：
+- **Local-first.** Markdown is the source of truth. SQLite (FTS5 + optional sqlite-vec) is a rebuildable index.
+- **Shared across agents.** One memory for Claude Code, Codex, Cursor, Devin, OpenClaw and 17 more targets.
+- **Traceable.** Every memory keeps provenance; candidates can be promoted and linked into decision chains.
+- **Hybrid search.** Keyword + local embedding search (Transformers.js), with keyword-only fallback.
 
-- [`docs/SPEC.md`](docs/SPEC.md)：功能规格、数据模型、MCP 工具和测试决策
-- [`docs/PLATFORM-ADAPTATION.md`](docs/PLATFORM-ADAPTATION.md)：平台适配架构和当前/规划范围
-- [`docs/OPENCLAW-IMPORT-DESIGN.md`](docs/OPENCLAW-IMPORT-DESIGN.md)：OpenClaw 导入设计和幂等/回滚策略
+## Install
 
-## 快速开始
+> Do not run `npx remme`. The npm registry name `remme` belongs to an unrelated project. Install from this repository.
 
-### 安装依赖并构建
+### Option 1: Manual
 
-```powershell
+```bash
+git clone https://github.com/cckyros/remme.git
+cd remme
 npm install
 npm run build
+node dist/cli.js targets
+node dist/cli.js install --target claude,codex --dir /path/to/your/project --dry-run
+node dist/cli.js install --target claude,codex --dir /path/to/your/project
 ```
 
-### 启动 MCP server
+`install` writes absolute `node` + `dist/cli.js` entries, so the clone must stay where it is. Re-running install is idempotent; `uninstall --target <id>` removes only what remme wrote.
 
-```powershell
-node dist/cli.js mcp
+### Option 2: AI install
+
+Paste this into your AI coding agent (Claude Code, Codex, Cursor, Devin, ...):
+
+```text
+Install remme from https://github.com/cckyros/remme on this machine.
+1. Clone the repository, then run `npm install` and `npm run build` inside it.
+2. Run `node dist/cli.js targets` and show me the list.
+3. Ask me which agents and which project directory to use.
+4. Run `node dist/cli.js install --target <ids> --dir <project> --dry-run`, show me the planned changes, and only run it without --dry-run after I confirm.
+5. Verify the MCP server with `node dist/cli.js status`, then tell me what changed and how to uninstall.
+Never store secrets in memories.
 ```
 
-MCP 客户端的 stdio 配置示例：
+### Option 3: Ask AI
+
+Not sure whether your agent is supported? Ask an AI assistant with the repository as context:
+
+```text
+Read https://github.com/cckyros/remme (README.md and docs/PLATFORM-ADAPTATION.md).
+Tell me whether my agent (<name your agent>) is in the supported list, what the installer
+does for it (automatic or manual), and the exact command to run.
+```
+
+### MCP client config (manual)
+
+Any stdio MCP client can run remme directly:
 
 ```json
 {
   "mcpServers": {
     "remme": {
       "command": "node",
-      "args": ["D:/path/to/remme/dist/cli.js", "mcp"],
-      "cwd": "D:/path/to/remme"
+      "args": ["/absolute/path/to/remme/dist/cli.js", "mcp"]
     }
   }
 }
 ```
 
-### Devin 本地配置
+## Platform support
 
-Devin IDE 的 MCP 配置文件位于 Windows 默认路径：
+`node dist/cli.js targets` prints the same list. **Automatic** means the installer writes the documented config file or copies the skill. **CLI** means it runs the client's own plugin command when that CLI is on `PATH`, otherwise it prints the steps. **Manual** means guidance only.
 
-```text
-%APPDATA%/devin/mcp_config.json
+| ID | Agent | Kind | Scope | What install does |
+|----|-------|------|-------|-------------------|
+| `claude` | Claude Code | native | project / global | Automatic: `mcpServers.remme` in `settings.json` + skill |
+| `codex` | Codex | native | project / global | Automatic: `[mcp_servers."remme"]` block in `config.toml`, rules block in `AGENTS.md`, skill, `supports_search_tool` fix |
+| `opencode` | OpenCode | native | project / global | Automatic: `mcp.remme` in `opencode.json` + shared skill |
+| `qwen` | Qwen Code | native | project / global | Automatic: `mcpServers.remme` in `.qwen/settings.json` + skill |
+| `reasonix` | Reasonix | native | project / global | Automatic: `.mcp.json` entry (project) or managed `[[plugins]]` block (global) + shared skill |
+| `kilo` | Kilo Code | native | project / global | Automatic: `mcp.remme` in `kilo.json` + shared skill |
+| `workbuddy` | WorkBuddy | native | project / global | Automatic: `.mcp.json` entry + skill |
+| `devin` | Devin | native | project / global | Automatic: `mcpServers.remme` in `mcp_config.json` + shared skill |
+| `trae` | Trae | skill | project | Skill copied; MCP added by hand in the IDE |
+| `pi` | pi | skill | project | Shared skill; MCP only when an MCP adapter extension is present |
+| `omp` | Oh My Pi | skill | project | Shared skill; MCP by hand |
+| `dsh` | dsh | skill | project | Shared skill; MCP by hand |
+| `copilot` | GitHub Copilot | plugin | global | CLI: `copilot plugin install <plugin dir>`, otherwise steps |
+| `cursor` | Cursor | plugin | global | Automatic: copies the plugin dir to `~/.cursor/plugins/local/remme` when Cursor is installed |
+| `kiro` | Kiro | plugin | global | Manual: import the plugin dir as a power |
+| `openclaw` | OpenClaw | plugin | global | Manual: no native bundle shipped yet |
+| `hermes` | Hermes | plugin | global | CLI: `hermes plugin install <plugin dir>`, otherwise steps |
+| `vscode` | VS Code | plugin | global | Automatic: `chat.pluginLocations` in user settings |
+| `chatgpt-codex` | ChatGPT & Codex | plugin | global | Marketplace shim + `codex plugin` commands when the codex CLI exists |
+| `grok` | Grok Bot | plugin | global | CLI: `grok plugin install <plugin dir> --trust`, otherwise steps |
+| `nanoclaw` | NanoClaw | plugin | global | Template copy + `ncl groups create` when `ncl` exists |
+| `other` | Other agents | plugin | global | Manual: install the plugin dir per your agent's docs |
+
+Installer rules: files are changed only when they carry remme's marker or key; existing files are backed up to `.bak`; unparseable JSON (including JSONC comments) is reported as manual and left untouched; a failing target never blocks the others.
+
+Common commands:
+
+```bash
+node dist/cli.js install --target all --dry-run          # preview every target
+node dist/cli.js install --target codex --scope global   # user-level instead of project
+node dist/cli.js uninstall --target claude --dir <project>
 ```
 
-本地源码测试时，将 remme 指向构建产物：
+## Memory rules
 
-```json
-{
-  "remme": {
-    "command": "C:/path/to/node.exe",
-    "args": ["D:/path/to/remme/dist/cli.js", "mcp"],
-    "cwd": "D:/path/to/remme"
-  }
-}
-```
+These rules tell an agent when to recall and when to write. The installer copies them into `AGENTS.md` (Codex) and into the remme skill (all other skill-aware targets). The source is [`src/assets/agents-fragment.md`](src/assets/agents-fragment.md).
 
-### 平台安装器
+**Recall (`memory_search`)**
 
-安装器目前验证了 4 个目标：
+- Before a non-trivial task, search the project name and key technology terms for past decisions and pitfalls.
+- On an error or bug, search the error keywords for an existing solution.
+- Before a technology choice or architecture decision, search the technology name.
+- When the user refers to the past ("last time", "I remember"), search the user's own wording.
+- Before a new project or module, search the domain terms.
+- Do not recall for simple questions, small talk, or work already done in the current session.
+- If nothing comes back, say so. Do not guess.
 
-```powershell
-node dist/cli.js install --target claude --dry-run
-node dist/cli.js install --target codex --dry-run
-node dist/cli.js install --target cursor --dry-run
-node dist/cli.js install --target openclaw --dry-run
-node dist/cli.js install --target devin --dry-run
-```
+**Write (`memory_write`)**
 
-去掉 `--dry-run` 才会写入目标客户端配置。重复安装应保持幂等，卸载使用：
+- After solving a non-trivial bug: the root cause and the fix (`knowledgeType: solution`).
+- After an architecture or technology decision: the decision and its reason (`decision`).
+- After finding a pitfall: the pitfall and how to avoid it (`pitfall`).
+- After confirming a reusable pattern: the pattern (`pattern`).
+- When the user asks you to remember something: write it as asked.
+- Do not write temporary debugging steps, routine operations, or unverified guesses.
+- Use `memory_update` to correct an existing memory instead of writing a duplicate.
 
-```powershell
-node dist/cli.js uninstall --target <target>
-```
+**Promote and link**
 
-## 数据位置
+- Confirmed knowledge: `memory_promote` (status `confirmed` or `verified`).
+- Related memories: `memory_link` with `derived_from`, `supports`, `corrects`, `supersedes`, `verifies` or `related_to`.
 
-默认情况下，remme 使用当前用户目录：
+Search results enter the agent's context but are never saved automatically: writing is always an explicit tool call.
+
+## MCP tools
+
+- `memory_search`: keyword + vector search with tag, project, status, knowledge type, entity and date filters
+- `memory_write`: create a Markdown memory (status `candidate` by default)
+- `memory_update`: update an existing memory
+- `memory_promote`: promote a candidate to knowledge, with provenance
+- `memory_link`: connect two memories
+- `memory_read`: full text, relations and provenance
+- `memory_list`: list memory files
+- `memory_restore`: validate a SQLite snapshot with `confirm=true`; online replacement is refused, restore offline instead
+- `memory_import`, `memory_import_status`, `memory_import_rollback`: import OpenClaw or Markdown directories with dry-run and rollback
+
+## CLI
+
+| Command | Purpose |
+|---------|---------|
+| `node dist/cli.js mcp` | run the MCP stdio server |
+| `node dist/cli.js targets` | list install targets |
+| `node dist/cli.js install --target <id,...\|all> [--scope project\|global] [--dir <path>] [--dry-run]` | install into agents |
+| `node dist/cli.js uninstall --target <id,...\|all> [...]` | remove what remme wrote |
+| `node dist/cli.js init` | show the effective config and the memory rules |
+| `node dist/cli.js status` / `reindex` | index status / rebuild the index |
+| `node dist/cli.js import <markdown\|openclaw> --source <dir>` | import memories |
+| `node dist/cli.js embed` | backfill missing embeddings |
+
+## Data location
 
 ```text
 ~/.remme/
-├── memory.db       # SQLite 索引
-├── memory.db.bak   # 单一备份点
+├── memory.db       # SQLite index (rebuildable)
+├── memory.db.bak   # single backup point
 ├── memory/         # Markdown source of truth
-└── config.json     # 可选配置覆盖
+├── plugin/         # Agent Plugins package written by the installer
+└── config.json     # optional overrides
 ```
 
-Windows 示例：`C:/Users/<user>/.remme/memory.db`。
+Set `REMME_CONFIG` to use a different config file. `dbPath` and `memoryDir` can point elsewhere. Tests use temporary directories and never touch your data.
 
-可通过 `REMME_CONFIG` 指向自定义 JSON 配置。配置中的 `dbPath` 和 `memoryDir` 可以改变数据库和 Markdown 目录位置。测试和 CI 应使用临时配置，避免修改用户数据。
+## Development
 
-## MCP 工具
-
-- `memory_search`：搜索记忆和知识，支持关键词、向量、标签、项目、状态和日期条件
-- `memory_write`：创建 Markdown 记忆或候选知识
-- `memory_update`：更新已有记忆
-- `memory_promote`：将候选记忆提升为知识并记录 provenance
-- `memory_link`：建立支持、修正、替代和来源关系
-- `memory_read`：读取全文、关系和 provenance
-- `memory_list`：列出记忆文件
-- `memory_restore`：在 `confirm=true` 时验证 SQLite 备份完整性，拒绝在线替换并指导离线恢复
-
-remme 的搜索是被动的：MCP 搜索结果会进入当前 Agent 上下文，但不会自动写回长期记忆。需要长期保存时，Agent 必须显式调用 `memory_write` 或 `memory_update`。
-
-## 开发与验证
-
-```powershell
-npm run build
+```bash
+npm run build      # bundle dist/cli.js and generate plugin.json, mcp.json, .mcp.json, skills/
 npm run typecheck
-npm test
-npm run verify
+npm test           # unit + component tests (MCP stdio and installer run against dist/cli.js)
+npm run verify     # all of the above
 ```
 
-`npm run verify` 会依次运行构建、严格类型检查和全部 Node 测试。当前测试覆盖：
+## Design boundaries
 
-- Markdown frontmatter 和 chunking
-- SQLite schema、FTS5、sqlite-vec 加载和 provenance
-- memory CRUD、知识提升和关系读取
-- CJK 短查询和 FTS-only fallback
-- SQLite backup/离线 restore 验证
-- 独立进程 MCP stdio 黑盒测试
-- 平台安装器 dry-run
+- Vector search is an exact local scan; no HNSW/ANN index yet.
+- Nothing is injected at session start; the agent calls `memory_search` explicitly.
+- No unattended LLM memory consolidation, no full conversation indexing.
+- Only local embeddings; no remote embedding provider or HTTP/SSE transport yet.
+- Plugin packages are built locally (`dist/` is not committed), so install from a clone.
 
-## 设计边界
+Design notes: [`docs/SPEC.md`](docs/SPEC.md), [`docs/PLATFORM-ADAPTATION.md`](docs/PLATFORM-ADAPTATION.md), [`docs/OPENCLAW-IMPORT-DESIGN.md`](docs/OPENCLAW-IMPORT-DESIGN.md).
 
-当前实现刻意保持轻量：
+## License
 
-- 向量搜索使用本地精确扫描，尚未引入 HNSW/ANN
-- session 启动时不会自动注入上下文，Agent 需要显式调用 `memory_search`
-- 不做无人值守的 LLM 记忆整理
-- 不索引完整会话历史
-- 当前只实现并验证 4 个平台，其他目标属于后续适配范围
-- 远程 embedding provider 和 HTTP/SSE transport 暂不在范围内
-
-## 许可证
-
-当前仓库尚未发布正式许可证。发布前需要补充许可证选择和文件。
+No license has been chosen yet. Choose and add a license file before publishing.

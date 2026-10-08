@@ -4,7 +4,7 @@
 
 remme 需要作为一个 MCP 插件适配到所有主流 AI agent 平台。本文档定义了适配架构、目标平台清单、每个平台的适配策略，以及实现路径。
 
-> **范围说明**：本文档同时记录目标架构和当前实现。当前已实现并验证 Claude Code、Codex、Cursor、OpenClaw 4 个目标；其余目标是后续适配规划，不代表当前已经可安装。
+> **范围说明**：22 个目标均已在 `src/install/targets.ts` 实现（native 8、skill 4、plugin 10）。自动写入的目标由组件测试覆盖配置格式；需要外部 CLI 或手动操作的目标返回具体步骤。各目标的自动化程度见 README 平台表。
 
 参考实现：`goal-acceptance`，其框架层（`src/framework/`）提供了完整的插件适配基础设施，业务层（`src/plugin/`）提供身份声明和工具定义。
 
@@ -114,9 +114,9 @@ export interface TargetAdapter {
 
 ## 目标平台清单
 
-### Native 适配器（规划 8 个，当前实现 2 个）
+### Native 适配器（8 个，已实现）
 
-这些 agent 有自己的 MCP 配置格式，适配器直接写配置文件。当前实现了 Claude Code 和 Codex，其他 native 目标保留在适配规划中。
+这些 agent 有自己的 MCP 配置格式，适配器直接写入文档化的配置文件。
 
 | ID | Label | 配置位置 | 配置格式 | scope |
 |----|-------|---------|---------|-------|
@@ -129,9 +129,9 @@ export interface TargetAdapter {
 | `workbuddy` | WorkBuddy | `~/.workbuddy/config.json` | JSON, mcp.stdio | global |
 | `devin` | Devin | `~/.devin/config.json` | JSON, mcpServers | global |
 
-### Skill 适配器（规划 4 个，当前实现 0 个）
+### Skill 适配器（4 个，已实现）
 
-这些 agent 读 Agent Skills 但不实现 Agent Plugins 标准。适配器复制 SKILL.md 到共享 `.agents/skills/remme/`，并打印手动安装命令。当前实现暂未覆盖 skill-only 目标。
+这些 agent 读 Agent Skills 但不实现 Agent Plugins 标准。适配器复制 SKILL.md 到共享 `.agents/skills/remme/`，并打印手动安装命令。skill 复制由共享安装逻辑完成；客户端无法自动配置 MCP 时返回手动步骤。
 
 | ID | Label | skill 位置 | MCP 配置 | scope |
 |----|-------|-----------|---------|-------|
@@ -140,9 +140,9 @@ export interface TargetAdapter {
 | `omp` | OMP | `.agents/skills/remme/` | 自动注册 `.mcp.json` | project |
 | `dsh` | DSH | `.agents/skills/remme/` | `dsh plugin add` 命令 | project |
 
-### Plugin 适配器（规划 10 个，当前实现 2 个）
+### Plugin 适配器（10 个，已实现）
 
-这些 agent 实现 Agent Plugins 开放标准（agent-plugins.org）。适配器物化一个共享插件目录（`~/.remme/plugin/`），包含 `plugin.json` + `mcp.json` + `.mcp.json` + `skills/`，然后按各平台方式注册。当前实现了 Cursor 和 OpenClaw。
+这些 agent 实现 Agent Plugins 开放标准（agent-plugins.org）。适配器物化一个共享插件目录（`~/.remme/plugin/`），包含 `plugin.json` + `mcp.json` + `.mcp.json` + `skills/`，然后按各平台方式注册。Cursor、VS Code 直接写入配置；Copilot、Hermes、Grok、ChatGPT & Codex、NanoClaw 在对应 CLI 存在时执行其插件命令；Kiro、OpenClaw、other 为手动指引。
 
 | ID | Label | 注册方式 | scope |
 |----|-------|---------|-------|
@@ -157,44 +157,42 @@ export interface TargetAdapter {
 | `nanoclaw` | NanoClaw | `ncl groups create --template` | global |
 | `other` | Other | 手动指导 | global |
 
-**合计规划 22 个目标平台，当前已实现 4 个：Claude Code、Codex、Cursor、OpenClaw。** 其余平台在后续适配阶段实现，本文档明确区分规划与当前状态。
+**合计 22 个目标平台，全部已实现于 `src/install/targets.ts`。** 本文档中的 `native-*.ts`、`plugin-agents.ts` 等文件名沿用参考实现 goal-acceptance 的命名；remme 将它们合并在 `src/install/` 下。
 
 ## 适配器实现细节
 
 ### 1. Claude Code（`native-claude.ts`）
 
 **安装内容**：
-- `.claude/settings.json`：`mcpServers.remme` 条目（`npx -y remme mcp`）
+- `.claude/settings.json`：`mcpServers.remme` 条目（`node <dist/cli.js> mcp`，绝对路径）
 - `.claude/skills/remme/SKILL.md`：skill 文件
-- `.claude/commands/remme.md`：slash command
-- `.gitignore`：添加 `.remme/` 条目（project scope）
 
 **MCP 配置格式**：
 ```json
 {
   "mcpServers": {
     "remme": {
-      "command": "npx",
-      "args": ["-y", "remme", "mcp"]
+      "command": "/absolute/path/to/node",
+      "args": ["/absolute/path/to/remme/dist/cli.js", "mcp"]
     }
   }
 }
 ```
 
-**remme 特殊处理**：remme 不需要 hook（纯工具驱动，无 PreToolUse 拦截），所以跳过 hook bundle 写入。只写 MCP 配置 + skill + command。
+**remme 特殊处理**：remme 不需要 hook（纯工具驱动，无 PreToolUse 拦截），所以跳过 hook bundle 写入。只写 MCP 配置 + skill。
 
 ### 2. Codex（`native-codex.ts`）
 
 **安装内容**：
-- `.codex/config.toml`：`[mcp_servers."remme"]` section（版本锁定）
-- `.codex/AGENTS.md`：managed block（`<!-- remme:start -->` ... `<!-- remme:end -->`）
+- `config.toml`（项目：`.codex/config.toml`，全局：`~/.codex/config.toml`）：`[mcp_servers."remme"]` 受管块（`# remme:start` ... `# remme:end`）
+- `AGENTS.md`（项目：仓库根目录，全局：`~/.codex/AGENTS.md`）：记忆规则受管块（`<!-- remme:start -->` ... `<!-- remme:end -->`）
 - `.agents/skills/remme/SKILL.md`：共享 skill（project scope only）
 
 **TOML 配置格式**：
 ```toml
 [mcp_servers."remme"]
-command = "npx"
-args = ["-y", "remme@0.1.0", "mcp"]
+command = "/absolute/path/to/node"
+args = ["/absolute/path/to/remme/dist/cli.js", "mcp"]
 tool_timeout_sec = 180
 ```
 
@@ -209,7 +207,7 @@ tool_timeout_sec = 180
     "local": {
       "remme": {
         "type": "local",
-        "command": ["npx", "-y", "remme", "mcp"],
+        "command": ["/absolute/path/to/node", "/absolute/path/to/remme/dist/cli.js", "mcp"],
         "enabled": true
       }
     }
@@ -220,7 +218,7 @@ tool_timeout_sec = 180
 ### 4. GitHub Copilot（`plugin-agents.ts`）
 
 **安装方式**：
-- 首选：`copilot plugin install https://github.com/user/remme`
+- 首选：`copilot plugin install <物化插件目录>`（`~/.remme/plugin/`，CLI 不存在时打印步骤）
 - Fallback：写入 `~/.copilot/settings.json` 的 `enabledPlugins` 数组
 
 **物化目录**：`~/.remme/plugin/`，包含 6 个文件：
@@ -247,6 +245,8 @@ openclaw-dist/ — OpenClaw 编译产物
 **配置格式**：JSON, mcpServers（与 Claude Code 相同格式）
 
 ## 框架层组件
+
+> 当前实现：`src/install/shared.ts`（安全写入、JSON 路径合并、文本块、skill、plugin 物化、CLI 探测）与 `src/install/targets.ts`（22 个适配器）。旧的 `src/framework/`（5 目标桩实现）已删除，由 `src/install/` 取代。
 
 ### CLI 命令（`cli.ts`）
 
@@ -396,11 +396,9 @@ src/plugin/openclaw-plugin.ts → openclaw-dist/  [remme 按需]
 
 - `src/plugin/manifest.ts` — remme 身份声明（见上文）
 - `src/plugin/tools.ts` — MCP 工具定义（规划 11 个：search/write/update/promote/link/read/list/restore/import/import_status/import_rollback；当前实现位于 `src/tools.ts`）
-- `src/plugin/targets/index.ts` — 适配器注册（当前 4 个，目标 22 个）
-- `src/plugin/targets/native-*.ts` — native 适配器（当前 Claude Code、Codex）
-- `src/plugin/targets/skill-agents.ts` — skill 适配器（待实现）
-- `src/plugin/targets/plugin-agents.ts` — plugin 适配器（当前 Cursor、OpenClaw，其他待实现）
-- `src/plugin/targets/shared.ts` — 共享 helpers
+- `src/install/targets.ts` — 适配器注册（22 个，已完成）
+- native / skill / plugin 适配器：已完成（8 + 4 + 10）
+- `src/install/shared.ts` — 共享 helpers
 
 ### 阶段 3：核心功能实现
 
@@ -436,7 +434,7 @@ src/plugin/openclaw-plugin.ts → openclaw-dist/  [remme 按需]
 
 ## 与 SPEC.md 的关系
 
-本文档是 SPEC.md 的扩展，专注于"全平台插件适配"层面。SPEC.md 定义 remme 的核心功能（记忆存储、搜索、embedding），本文档定义目标适配架构和当前/后续平台范围。当前只承诺已验证的 4 个目标，22 个是长期规划总数。
+本文档是 SPEC.md 的扩展，专注于"全平台插件适配"层面。SPEC.md 定义 remme 的核心功能（记忆存储、搜索、embedding），本文档定义目标适配架构和当前/后续平台范围。22 个目标均已实现；实机验证范围见 README 平台表。
 
 SPEC.md 中的配置系统（`~/.remme/config.json`）与本适配框架的配置系统统一：manifest.config 声明字段，`config.ts` 处理优先级，CLI 的 `config get/set` 命令操作。
 
