@@ -8,6 +8,7 @@
   },
   "homepage": "https://github.com/cckyros/remme",
   "repository": "https://github.com/cckyros/remme",
+  "license": "MIT",
   "keywords": [
     "remme",
     "mcp",

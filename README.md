@@ -199,4 +199,4 @@ Design notes: [`docs/SPEC.md`](docs/SPEC.md), [`docs/PLATFORM-ADAPTATION.md`](do
 
 ## License
 
-No license has been chosen yet. Choose and add a license file before publishing.
+MIT. See [`LICENSE`](LICENSE).

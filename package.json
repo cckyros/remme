@@ -2,6 +2,7 @@
   "name": "remme",
   "version": "0.1.0",
   "description": "Local-first MCP knowledge memory with SQLite and cross-agent provenance.",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "remme": "dist/cli.js"

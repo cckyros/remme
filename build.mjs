@@ -58,6 +58,7 @@ await writeFile(join(root, "plugin.json"), json({
   author: { name: githubSlug.split("/")[0] },
   homepage,
   repository: homepage,
+  license: "MIT",
   keywords: [name, "mcp", "agent-plugins", "agent-skills", "memory"],
 }), "utf8");
 await writeFile(join(root, "mcp.json"), json(mcp), "utf8");

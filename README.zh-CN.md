@@ -199,4 +199,4 @@ npm run verify     # 以上全部
 
 ## 许可证
 
-尚未选择许可证。发布前需要选择并添加许可证文件。
+MIT 许可证，见 [`LICENSE`](LICENSE)。
