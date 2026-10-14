@@ -2,7 +2,7 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "remme",
   "version": "0.1.0",
-  "description": "Local-first MCP knowledge memory with SQLite and cross-agent provenance.",
+  "description": "Local-first shared memory for AI agents: Markdown you can read, SQLite search, one MCP endpoint for 22 agent clients.",
   "author": {
     "name": "cckyros"
   },

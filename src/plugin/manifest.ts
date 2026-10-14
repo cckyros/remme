@@ -26,7 +26,7 @@ export const manifest: PluginManifest = {
   name: "remme",
   version: "0.1.0",
   brand: "remme",
-  description: "Local-first MCP knowledge memory with SQLite and cross-agent provenance.",
+  description: "Local-first shared memory for AI agents: Markdown you can read, SQLite search, one MCP endpoint for 22 agent clients.",
   githubSlug: "cckyros/remme",
   markers: {
     skill: "remme:skill",

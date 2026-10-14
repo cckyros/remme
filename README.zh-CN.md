@@ -1,17 +1,78 @@
 # remme
 
-面向 AI Agent 的本地优先 MCP 记忆。知识以 Markdown 文件保存，你可以直接阅读和编辑；SQLite 索引负责检索；接入的每个 Agent 共享同一份记忆。
+**你的 Agent 每次都会忘掉一切。remme 是它们共同的记忆。**
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node ≥22.18](https://img.shields.io/badge/node-%3E%3D22.18-339933)](package.json)
+[![Agent 目标: 22](https://img.shields.io/badge/agent%20targets-22-informational)](#平台支持)
 
 [English](README.md) | **简体中文**
 
+[安装](#安装) · [工作原理](#工作原理) · [平台支持](#平台支持) · [记忆规则](#记忆规则) · [MCP 工具](#mcp-工具)
+
 > 状态：pre-alpha。MCP 服务可用并有 stdio 测试覆盖；安装器的主要配置格式有组件测试覆盖，但并非每个客户端都做过实机验证。
 
-## 特性
+## 为什么需要 remme
 
-- **本地优先**：Markdown 是事实来源，SQLite（FTS5 + 可选 sqlite-vec）是可重建的索引。
-- **跨 Agent 共享**：Claude Code、Codex、Cursor、Devin、OpenClaw 等 22 个目标共用一份记忆。
-- **可追溯**：每条记忆保留 provenance；候选知识可以提升，并通过关系链关联。
-- **混合检索**：关键词 + 本地 embedding 向量检索（Transformers.js），embedding 不可用时降级为纯关键词。
+每次开新会话，你的 Agent 都是一张白纸。上周一起修好的 bug、争论过的架构决策、踩过的坑：全没了。于是你再讲一遍，它再学一遍，同样的工作做两次。
+
+如果你同时用多个 Agent，每个还各记各的，或者什么都不记。
+
+remme 在你本机维护**一份所有 Agent 共享的记忆**，格式由你掌控：可以直接读、改、diff、提交 git 的纯 Markdown 文件。Agent 开工前检索它，做完后把值得留的写回去。你在 Claude Code 里积累的上下文，打开 Codex、Cursor 或 Devin 时还在。
+
+## 工作原理
+
+三层结构，每层都可替换：
+
+| 层 | 是什么 | 为什么 |
+|----|--------|--------|
+| **Markdown** | 每条记忆一个 `.md` 文件，YAML frontmatter 存元数据 | 事实来源。人类可读、可进 git、不依赖任何工具存活 |
+| **SQLite** | FTS5 关键词索引 + 可选本地向量（sqlite-vec / Transformers.js） | 可重建的检索索引。删掉后用 `reindex` 从 Markdown 重建 |
+| **MCP** | 一个 stdio 服务，暴露 11 个工具 | 同一份记忆接入 22 个 Agent 客户端 |
+
+记忆文件长这样：
+
+```markdown
+---
+importance: 7
+tags: ["sqlite", "better-sqlite3"]
+knowledgeType: "pitfall"
+status: "verified"
+project: "my-app"
+agent: "claude"
+entities: ["better-sqlite3"]
+---
+
+better-sqlite3 每条语句都在主线程同步执行。迁移必须用
+db.transaction(...).immediate() 包起来：一次失败的 CREATE 曾让
+这个项目的索引只建了一半。对外提供服务前先校验 schema_version。
+```
+
+`memory_search` 返回排序后可过滤的结果：
+
+```json
+{
+  "results": [
+    {
+      "path": "2026-09/2026-09-04T10-19-29-675Z-9or6p.md",
+      "snippet": "better-sqlite3 runs every statement synchronously…",
+      "score": 0.82,
+      "vectorScore": 0.77,
+      "textScore": 0.90,
+      "importance": 7,
+      "tags": ["sqlite", "better-sqlite3"],
+      "status": "verified",
+      "knowledgeType": "pitfall",
+      "project": "my-app",
+      "agent": "claude"
+    }
+  ],
+  "mode": "hybrid",
+  "total": 3
+}
+```
+
+分数融合关键词与向量匹配，按重要度加权，并可按项目、Agent、标签、状态、知识类型、实体或日期范围过滤。
 
 ## 安装
 
@@ -24,7 +85,7 @@ git clone https://github.com/cckyros/remme.git
 cd remme
 npm install
 npm run build
-node dist/cli.js targets
+node dist/cli.js targets          # 查看全部 22 个目标
 node dist/cli.js install --target claude,codex --dir /path/to/your/project --dry-run
 node dist/cli.js install --target claude,codex --dir /path/to/your/project
 ```
@@ -101,8 +162,6 @@ node dist/cli.js install --target claude,codex --dir /path/to/your/project
 
 安装器规则：只修改带有 remme 标记或键名的内容；已有文件在首次修改前备份为 `.bak`；无法解析的 JSON（包括 JSONC 注释）会报告为手动处理且不改动；单个目标失败不会阻塞其他目标。
 
-常用命令：
-
 ```bash
 node dist/cli.js install --target all --dry-run          # 预览所有目标的改动
 node dist/cli.js install --target codex --scope global   # 用户级而非项目级
@@ -142,15 +201,19 @@ node dist/cli.js uninstall --target claude --dir <project>
 
 ## MCP 工具
 
-- `memory_search`：关键词 + 向量检索，支持标签、项目、状态、知识类型、实体和日期过滤
-- `memory_write`：创建 Markdown 记忆（默认状态 `candidate`）
-- `memory_update`：更新已有记忆
-- `memory_promote`：把候选记忆提升为知识，并记录 provenance
-- `memory_link`：关联两条记忆
-- `memory_read`：读取全文、关系和 provenance
-- `memory_list`：列出记忆文件
-- `memory_restore`：在 `confirm=true` 时校验 SQLite 快照；拒绝在线替换，请离线恢复
-- `memory_import`、`memory_import_status`、`memory_import_rollback`：导入 OpenClaw 或 Markdown 目录，支持 dry-run 和回滚
+| 工具 | 作用 |
+|------|------|
+| `memory_search` | 关键词 + 向量检索，支持标签、项目、状态、知识类型、实体和日期过滤 |
+| `memory_write` | 创建 Markdown 记忆（默认状态 `candidate`） |
+| `memory_update` | 更新已有记忆 |
+| `memory_promote` | 把候选记忆提升为知识，并记录 provenance |
+| `memory_link` | 关联两条记忆，形成决策链 |
+| `memory_read` | 读取全文、关系和 provenance |
+| `memory_list` | 列出记忆文件 |
+| `memory_restore` | 在 `confirm=true` 时校验 SQLite 快照；拒绝在线替换，请离线恢复 |
+| `memory_import` | 导入 OpenClaw 或 Markdown 目录，支持 dry-run |
+| `memory_import_status` | 查看历史导入批次 |
+| `memory_import_rollback` | 移除一个导入批次（需要 `confirm=true`） |
 
 ## 命令行
 

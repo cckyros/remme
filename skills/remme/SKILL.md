@@ -1,6 +1,6 @@
 ---
 name: remme
-description: "Recall and save cross-agent memories with remme: search past decisions and pitfalls before non-trivial work, and record verified solutions afterwards. Local-first MCP knowledge memory with SQLite and cross-agent provenance."
+description: "Recall and save cross-agent memories with remme: search past decisions and pitfalls before non-trivial work, and record verified solutions afterwards. Local-first shared memory for AI agents: Markdown you can read, SQLite search, one MCP endpoint for 22 agent clients."
 ---
 <!-- remme:skill -->
 # remme memory skill

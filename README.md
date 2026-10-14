@@ -1,17 +1,78 @@
 # remme
 
-Local-first MCP memory for AI agents. Markdown files hold the knowledge you can read and edit; a SQLite index makes it searchable; every agent you connect shares the same memory.
+**Your agents forget everything. remme is the memory they share.**
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node ≥22.18](https://img.shields.io/badge/node-%3E%3D22.18-339933)](package.json)
+[![Agent targets: 22](https://img.shields.io/badge/agent%20targets-22-informational)](#platform-support)
 
 **English** | [简体中文](README.zh-CN.md)
 
+[Install](#install) · [How it works](#how-it-works) · [Platforms](#platform-support) · [Memory rules](#memory-rules) · [MCP tools](#mcp-tools)
+
 > Status: pre-alpha. The MCP server works and is covered by stdio tests. The installer's main config formats are covered by component tests; live runs inside each client are not verified for every target.
 
-## Features
+## Why remme
 
-- **Local-first.** Markdown is the source of truth. SQLite (FTS5 + optional sqlite-vec) is a rebuildable index.
-- **Shared across agents.** One memory for Claude Code, Codex, Cursor, Devin, OpenClaw and 17 more targets.
-- **Traceable.** Every memory keeps provenance; candidates can be promoted and linked into decision chains.
-- **Hybrid search.** Keyword + local embedding search (Transformers.js), with keyword-only fallback.
+Every new session, your agent wakes up with nothing. The bug you fixed together last week, the design decision you argued about, the pitfall you discovered the hard way: gone. So you re-explain, it re-learns, and you both do the same work twice.
+
+And if you use more than one agent, each keeps its own silo, or keeps nothing at all.
+
+remme keeps **one shared memory on your machine**, in a format you own: plain Markdown files you can read, edit, diff, and commit. Your agents search it before they start work and write back what is worth keeping. Context you build in Claude Code is there when you open Codex, Cursor, or Devin.
+
+## How it works
+
+Three layers, each replaceable:
+
+| Layer | What it is | Why |
+|-------|-----------|-----|
+| **Markdown** | One `.md` file per memory, YAML frontmatter for metadata | Source of truth. Human-readable, git-friendly, survives any tool |
+| **SQLite** | FTS5 keyword index + optional local embeddings (sqlite-vec / Transformers.js) | Rebuildable search index. Delete it and `reindex` rebuilds it from the Markdown |
+| **MCP** | One stdio server exposing 11 tools | The same memory plugs into 22 agent clients |
+
+A memory file looks like this:
+
+```markdown
+---
+importance: 7
+tags: ["sqlite", "better-sqlite3"]
+knowledgeType: "pitfall"
+status: "verified"
+project: "my-app"
+agent: "claude"
+entities: ["better-sqlite3"]
+---
+
+better-sqlite3 runs every statement synchronously on the main thread.
+Wrap migrations in db.transaction(...).immediate(): a failed CREATE once
+left this project's index half-built. Verify schema_version before serving.
+```
+
+And `memory_search` returns ranked, filterable results:
+
+```json
+{
+  "results": [
+    {
+      "path": "2026-09/2026-09-04T10-19-29-675Z-9or6p.md",
+      "snippet": "better-sqlite3 runs every statement synchronously…",
+      "score": 0.82,
+      "vectorScore": 0.77,
+      "textScore": 0.90,
+      "importance": 7,
+      "tags": ["sqlite", "better-sqlite3"],
+      "status": "verified",
+      "knowledgeType": "pitfall",
+      "project": "my-app",
+      "agent": "claude"
+    }
+  ],
+  "mode": "hybrid",
+  "total": 3
+}
+```
+
+Scores blend keyword and vector matches, weighted by importance, filtered by project, agent, tags, status, knowledge type, entity, or date range.
 
 ## Install
 
@@ -24,7 +85,7 @@ git clone https://github.com/cckyros/remme.git
 cd remme
 npm install
 npm run build
-node dist/cli.js targets
+node dist/cli.js targets          # see all 22 targets
 node dist/cli.js install --target claude,codex --dir /path/to/your/project --dry-run
 node dist/cli.js install --target claude,codex --dir /path/to/your/project
 ```
@@ -101,8 +162,6 @@ Any stdio MCP client can run remme directly:
 
 Installer rules: files are changed only when they carry remme's marker or key; existing files are backed up to `.bak`; unparseable JSON (including JSONC comments) is reported as manual and left untouched; a failing target never blocks the others.
 
-Common commands:
-
 ```bash
 node dist/cli.js install --target all --dry-run          # preview every target
 node dist/cli.js install --target codex --scope global   # user-level instead of project
@@ -142,15 +201,19 @@ Search results enter the agent's context but are never saved automatically: writ
 
 ## MCP tools
 
-- `memory_search`: keyword + vector search with tag, project, status, knowledge type, entity and date filters
-- `memory_write`: create a Markdown memory (status `candidate` by default)
-- `memory_update`: update an existing memory
-- `memory_promote`: promote a candidate to knowledge, with provenance
-- `memory_link`: connect two memories
-- `memory_read`: full text, relations and provenance
-- `memory_list`: list memory files
-- `memory_restore`: validate a SQLite snapshot with `confirm=true`; online replacement is refused, restore offline instead
-- `memory_import`, `memory_import_status`, `memory_import_rollback`: import OpenClaw or Markdown directories with dry-run and rollback
+| Tool | What it does |
+|------|--------------|
+| `memory_search` | Keyword + vector search with tag, project, status, knowledge type, entity and date filters |
+| `memory_write` | Create a Markdown memory (status `candidate` by default) |
+| `memory_update` | Update an existing memory |
+| `memory_promote` | Promote a candidate to knowledge, with provenance |
+| `memory_link` | Connect two memories into a decision chain |
+| `memory_read` | Full text, relations and provenance |
+| `memory_list` | List memory files |
+| `memory_restore` | Validate a SQLite snapshot with `confirm=true`; online replacement is refused, restore offline instead |
+| `memory_import` | Import OpenClaw or Markdown directories, with dry-run |
+| `memory_import_status` | Inspect past import batches |
+| `memory_import_rollback` | Remove an import batch (`confirm=true`) |
 
 ## CLI
 

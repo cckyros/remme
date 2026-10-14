@@ -1,7 +1,7 @@
 {
   "name": "remme",
   "version": "0.1.0",
-  "description": "Local-first MCP knowledge memory with SQLite and cross-agent provenance.",
+  "description": "Local-first shared memory for AI agents: Markdown you can read, SQLite search, one MCP endpoint for 22 agent clients.",
   "license": "MIT",
   "type": "module",
   "bin": {
