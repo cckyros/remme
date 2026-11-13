@@ -77,7 +77,7 @@ export const manifest: PluginManifest = {
   tools, // 从 tools.ts 导入
 
   skill: { filename: "SKILL.md" },
-  // remme 不需要 hook（纯工具驱动，无 PreToolUse 拦截）
+  // hook 是可选能力：install --hooks 时为支持的平台写生命周期 hook（仅 claude/devin）
 };
 ```
 
@@ -179,7 +179,7 @@ export interface TargetAdapter {
 }
 ```
 
-**remme 特殊处理**：remme 不需要 hook（纯工具驱动，无 PreToolUse 拦截），所以跳过 hook bundle 写入。只写 MCP 配置 + skill。
+**remme 特殊处理**：hook 是可选能力——`install --hooks` 时为 Claude Code 在 `.claude/settings.json` 写 hooks，为 Devin 写 `.devin/hooks.v1.json`（项目级）或 `config.json` 的 hooks 键（全局）；其余目标不写 hook。默认只写 MCP 配置 + skill。
 
 ### 2. Codex（`native-codex.ts`）
 
@@ -356,8 +356,8 @@ function traeConfigDir(home: string): string {
 ## 构建流程（`build.mjs`）
 
 ```
-src/cli-entry.ts → dist/cli.js          (ESM, bundled)
-src/hook-entry.ts → dist/hook.cjs        (CJS, banner marker) [remme 不需要]
+src/cli.ts → dist/cli.js                 (ESM, bundled)          [实际]
+src/hook.ts → dist/hook.js               (ESM, ~15KB, 无 sqlite/transformers) [remme 的可选坑警示 hook]
 src/plugin/dsh-plugin.ts → dist/dsh-plugin.js  [remme 不需要]
 src/plugin/openclaw-plugin.ts → openclaw-dist/  [remme 按需]
 ```
@@ -370,13 +370,13 @@ src/plugin/openclaw-plugin.ts → openclaw-dist/  [remme 按需]
 
 **skill 同步**：`src/assets/SKILL.md` → `skills/remme/SKILL.md` + `references/`
 
-**remme 简化**：不需要 hook bundle（无 PreToolUse 拦截）和 dsh cordis plugin（remme 不是 dsh 插件）。只需要 CLI bundle + identity files + skill sync。
+**remme 简化**：不需要 dsh cordis plugin（remme 不是 dsh 插件）。需要 CLI bundle + hook bundle（`dist/hook.js`，仅 `--hooks` 时被引用）+ identity files + skill sync。
 
 ## 实现路径
 
 ### 阶段 1：框架层移植
 
-（原计划，已由 `src/install/` 实现取代）从 `goal-acceptance/src/framework/` 移植以下文件，remme 不需要 hook 相关的文件：
+（原计划，已由 `src/install/` 实现取代）从 `goal-acceptance/src/framework/` 移植以下文件；hook 相关文件未移植，remme 用自己的 `src/hook.ts` + `src/install/hooks.ts` 实现了可选坑警示：
 
 - `manifest.ts` — 类型定义（原样复制）
 - `registry.ts` — TargetAdapter 契约 + 调度（原样复制）
@@ -389,8 +389,8 @@ src/plugin/openclaw-plugin.ts → openclaw-dist/  [remme 按需]
 - `doctor-runtime.ts` — 诊断检查（简化，添加 remme 特有检查：SQLite/sqlite-vec/embedding 模型）
 
 **不需要的文件**：
-- `hook-runtime.ts` — remme 无 hook
-- `hooksettings.ts` — remme 无 hook
+- `hook-runtime.ts` — 未移植；remme 的 hook 入口是独立的 `src/hook.ts`（打包为 `dist/hook.js`）
+- `hooksettings.ts` — 未移植；hook 配置合并在 `src/install/hooks.ts`
 
 ### 阶段 2：业务层实现
 

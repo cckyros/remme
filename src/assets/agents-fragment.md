@@ -23,6 +23,7 @@ remme is a local memory shared by all your agents. Markdown files are the source
 - Do not write: temporary exploration or debugging steps, routine operations, or unverified guesses.
 - Use memory_update to correct an existing memory instead of writing a duplicate.
 - New writes start as status "candidate". Set importance (1-10) and tags so they can be recalled later.
+- For pitfalls and reusable fixes, also set triggerPaths / triggerCommands / triggerKeywords (file globs, command regexes, keywords) so lifecycle hooks can warn agents before they repeat the mistake. Only confirmed/verified memories with triggers participate in warnings.
 
 ### Promote and link
 

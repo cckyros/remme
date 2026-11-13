@@ -98,11 +98,14 @@ test("renderMarkdown: minimal metadata uses defaults", () => {
 });
 
 test("renderMarkdown: frontmatter round trips essential knowledge metadata", () => {
-  const source = renderMarkdown("A decision", { knowledgeType: "decision", status: "verified", tags: ["sqlite"] }, "codex");
+  const source = renderMarkdown("A decision", { knowledgeType: "decision", status: "verified", tags: ["sqlite"], triggerPaths: ["src/db.ts"], triggerCommands: ["git commit .*<<"], triggerKeywords: ["heredoc"] }, "codex");
   const parsed = parseMarkdown(source, "unknown");
   assert.equal(parsed.metadata.knowledgeType, "decision");
   assert.equal(parsed.metadata.status, "verified");
   assert.deepEqual(parsed.metadata.tags, ["sqlite"]);
+  assert.deepEqual(parsed.metadata.triggerPaths, ["src/db.ts"]);
+  assert.deepEqual(parsed.metadata.triggerCommands, ["git commit .*<<"]);
+  assert.deepEqual(parsed.metadata.triggerKeywords, ["heredoc"]);
   assert.equal(parsed.metadata.agent, "codex");
 });
 

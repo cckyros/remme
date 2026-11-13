@@ -25,8 +25,10 @@ const manifest = await loadManifest();
 const { name, brand, version, description, githubSlug, markers } = manifest;
 
 await build({
-  entryPoints: [join(root, "src/cli.ts")],
-  outfile: join(root, "dist/cli.js"),
+  // cli.js = MCP server + installer; hook.js = tiny standalone lifecycle-hook
+  // bundle (no better-sqlite3 / transformers) so every hook call stays ~100ms.
+  entryPoints: [join(root, "src/cli.ts"), join(root, "src/hook.ts")],
+  outdir: join(root, "dist"),
   bundle: true,
   platform: "node",
   format: "esm",

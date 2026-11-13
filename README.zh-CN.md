@@ -188,6 +188,7 @@ node dist/cli.js uninstall --target claude --dir <project>
 - 做了架构或技术选型决策后：写决策和理由（`decision`）。
 - 发现坑：写坑和避法（`pitfall`）。
 - 确认可复用模式：写模式描述（`pattern`）。
+- 对坑和可复用解法，填写 `triggerPaths` / `triggerCommands` / `triggerKeywords`，让 hook 在犯错前发出警示。
 - 用户明确要求记住时：按要求写。
 - 不写临时调试过程、日常操作或未经验证的猜测。
 - 纠正已有记忆时用 `memory_update`，不要重复写一条。
@@ -198,6 +199,15 @@ node dist/cli.js uninstall --target claude --dir <project>
 - 相关记忆：`memory_link`，关系可选 `derived_from`、`supports`、`corrects`、`supersedes`、`verifies`、`related_to`。
 
 检索结果会进入 Agent 的上下文，但不会自动保存；写入永远是一次显式的工具调用。
+
+### 坑警示（可选）
+
+`install --hooks` 只为 **Claude Code** 和 **Devin** 安装生命周期 hook。当提示词、工具调用或工具失败命中 `confirmed`/`verified` 记忆的触发字段时，Agent 会收到一条警示和 `memory_read` 指引。`PreToolUse` 每条记忆每会话只拦截一次并给出理由，重试即放行；提示词和失败 hook 注入简短上下文。hook 出错时静默放行，不碰数据库，每次调用约 50ms。其他目标仍然只有显式 `memory_search`。
+
+```bash
+node dist/cli.js install --target claude,devin --hooks   # MCP + skill + 坑警示 hook
+node dist/cli.js uninstall --target claude               # 同时移除我们的 hook
+```
 
 ## MCP 工具
 
@@ -244,7 +254,7 @@ node dist/cli.js uninstall --target claude --dir <project>
 ## 开发
 
 ```bash
-npm run build      # 打包 dist/cli.js，并生成 plugin.json、mcp.json、.mcp.json、skills/
+npm run build      # 打包 dist/cli.js + dist/hook.js，并生成 plugin.json、mcp.json、.mcp.json、skills/
 npm run typecheck
 npm test           # 单元 + 组件测试（MCP stdio 和安装器都针对 dist/cli.js 运行）
 npm run verify     # 以上全部
@@ -253,7 +263,7 @@ npm run verify     # 以上全部
 ## 设计边界
 
 - 向量检索是本地精确扫描，尚未引入 HNSW/ANN 索引。
-- 会话启动时不自动注入上下文，由 Agent 显式调用 `memory_search`。
+- 默认由 Agent 显式调用 `memory_search` 召回；`--hooks` 可选安装有边界的坑警示（仅 Claude Code 和 Devin，仅 confirmed/verified 且带显式触发条件的记忆，每会话一次，失败静默放行）。
 - 不做无人值守的 LLM 记忆整理，不索引完整会话历史。
 - 只支持本地 embedding，暂不支持远程 embedding 服务和 HTTP/SSE 传输。
 - 插件包在本地构建（`dist/` 不入库），因此请从克隆的仓库安装。

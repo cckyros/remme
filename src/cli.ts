@@ -14,7 +14,7 @@ const command = process.argv[2] ?? "mcp";
 const subcommand = process.argv[3] ?? "";
 const flag = (name: string) => { const i = process.argv.indexOf(`--${name}`); return i >= 0 ? process.argv[i + 1] : undefined; };
 const target = flag("target") ?? "";
-const context: Ctx = { dir: flag("dir") ?? process.cwd(), home: homedir(), scope: flag("scope") === "global" ? "global" : "project", dryRun: process.argv.includes("--dry-run") };
+const context: Ctx = { dir: flag("dir") ?? process.cwd(), home: homedir(), scope: flag("scope") === "global" ? "global" : "project", dryRun: process.argv.includes("--dry-run"), hooks: process.argv.includes("--hooks") };
 if (command === "mcp") await runMcp();
 else if (command === "reindex" || command === "status") { const config = loadConfig(); ensureConfigDirs(config); const db = new MemoryDatabase(config); db.sync(); console.log(command === "status" ? JSON.stringify({ database: config.dbPath, memoryDir: config.memoryDir, chunks: db.rows().length }) : "reindexed"); db.close(); }
 else if (command === "init") { const config = loadConfig(); ensureConfigDirs(config); console.log(JSON.stringify(config, null, 2)); console.log("\n--- Recommended AGENTS.md rules ---"); console.log(memoryRules); }
@@ -22,7 +22,7 @@ else if (command === "targets") { for (const t of targets) console.log(`${t.id.p
 else if (command === "install" || command === "uninstall") {
   const ids = target.split(",").filter(Boolean);
   const unknown = ids.filter((id) => id !== "all" && !targets.some((t) => t.id === id));
-  if (!ids.length || unknown.length) { console.error(unknown.length ? `unknown target: ${unknown.join(", ")} (see: remme targets)` : "usage: remme install|uninstall --target <id[,id]|all> [--scope project|global] [--dir <path>] [--dry-run]"); process.exitCode = 1; }
+  if (!ids.length || unknown.length) { console.error(unknown.length ? `unknown target: ${unknown.join(", ")} (see: remme targets)` : "usage: remme install|uninstall --target <id[,id]|all> [--scope project|global] [--dir <path>] [--dry-run] [--hooks]"); process.exitCode = 1; }
   else for (const t of targets.filter((x) => ids.includes("all") || ids.includes(x.id))) {
     const result = command === "install" ? t.install(context) : t.uninstall(context);
     console.log(`[${result.status}] ${t.label}: ${result.detail}`);

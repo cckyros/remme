@@ -8,6 +8,7 @@ import { embed } from "./embedding.ts";
 import { parseMarkdown, renderMarkdown, type MemoryMetadata } from "./chunker.ts";
 import { rankResults, type SearchItem } from "./search.ts";
 import { getImporter } from "./importer/registry.ts";
+import { refreshWarningIndex } from "./triggers.ts";
 
 let state: { config: Config; db: MemoryDatabase } | null = null;
 export function closeMemoryStore(): void { state?.db.close(); state = null; }
@@ -37,8 +38,8 @@ function boundedInteger(value: unknown, fallback: number, max: number): number {
   if (typeof number !== "number" || !Number.isInteger(number) || number < 1 || number > max) throw new Error(`limit must be an integer between 1 and ${max}`);
   return number;
 }
-function parseTags(value: unknown): string[] {
-  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) throw new Error("tags/entities must be arrays of strings");
+function parseTags(value: unknown, label = "tags/entities"): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) throw new Error(`${label} must be an array of strings`);
   return value;
 }
 function searchFilters(args: Record<string, unknown>): SearchFilters {
@@ -53,6 +54,7 @@ function searchFilters(args: Record<string, unknown>): SearchFilters {
   if (args.tags !== undefined) filters.tags = parseTags(args.tags);
   return filters;
 }
+const TRIGGER_KEYS = ["triggerPaths", "triggerCommands", "triggerKeywords"] as const;
 function metadataChanges(args: Record<string, unknown>): Partial<MemoryMetadata> {
   const metadata: Partial<MemoryMetadata> = {};
   if (args.importance !== undefined) {
@@ -60,6 +62,7 @@ function metadataChanges(args: Record<string, unknown>): Partial<MemoryMetadata>
     metadata.importance = args.importance;
   }
   for (const key of ["tags", "entities"] as const) if (args[key] !== undefined) metadata[key] = parseTags(args[key]);
+  for (const key of TRIGGER_KEYS) if (args[key] !== undefined) metadata[key] = parseTags(args[key], key);
   for (const key of ["knowledgeType", "status", "project"] as const) if (args[key] !== undefined) {
     if (typeof args[key] !== "string") throw new Error(`${key} must be a string`);
     metadata[key] = args[key];
@@ -126,6 +129,7 @@ export async function memoryWrite(args: Record<string, unknown>): Promise<unknow
   db.indexFile(path);
   const row = db.findPath(path);
   if (row) db.addProvenance(row.id, "created", config.agent, null);
+  refreshWarningIndex(config);
   return { path: join(month, name), status: "created", embedding: await embedFile(db, config, path) };
 }
 export async function memoryUpdate(args: Record<string, unknown>): Promise<unknown> {
@@ -140,6 +144,7 @@ export async function memoryUpdate(args: Record<string, unknown>): Promise<unkno
   db.indexFile(path);
   const row = db.findPath(path);
   if (row) db.addProvenance(row.id, "updated", config.agent, null);
+  refreshWarningIndex(config);
   return { path: requested, status: "updated", embedding: await embedFile(db, config, path) };
 }
 export async function memoryRead(args: Record<string, unknown>): Promise<unknown> {
@@ -169,6 +174,7 @@ export async function memoryPromote(args: Record<string, unknown>): Promise<unkn
   db.indexFile(full);
   const row = db.findPath(full);
   if (row) db.addProvenance(row.id, `status:${status}`, config.agent, row.id);
+  refreshWarningIndex(config);
   return { path, status };
 }
 export async function memoryLink(args: Record<string, unknown>): Promise<unknown> {

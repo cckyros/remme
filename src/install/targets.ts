@@ -12,6 +12,7 @@ import {
   claudeEntry, cliPath, combine, dropJson, error, hasCli, installSkill, localEntry, manual, materialize,
   ok, pluginReady, read, removeBlock, runCli, setJson, skipped, stdioEntry, uninstallSkill, upsertBlock, write,
 } from "./shared.ts";
+import { installClaudeHooks, installDevinHooks, uninstallClaudeHooks, uninstallDevinHooks } from "./hooks.ts";
 import type { Ctx, Kind, Result } from "./shared.ts";
 
 export interface Target {
@@ -58,11 +59,27 @@ function mcpJson(o: {
 
 // ---------------------------------------------------------------- native
 
-const claude = mcpJson({
-  id: "claude", label: "Claude Code", scope: "both",
-  file: (c) => at(c, ".claude", "settings.json"), key: "mcpServers", entry: claudeEntry,
-  skill: (c) => skillAt(c, ".claude"),
-});
+const HOOKS_NOTE = "pitfall-warning hooks off (re-run with --hooks to enable)";
+
+const claude: Target = {
+  id: "claude", kind: "native", label: "Claude Code", scope: "both",
+  install(c) {
+    const settings = at(c, ".claude", "settings.json");
+    return combine([
+      setJson(settings, ["mcpServers", name], claudeEntry(), c.dryRun),
+      installSkill(skillAt(c, ".claude"), c.dryRun),
+      c.hooks ? installClaudeHooks(settings, c.dryRun) : ok(HOOKS_NOTE),
+    ]);
+  },
+  uninstall(c) {
+    const settings = at(c, ".claude", "settings.json");
+    return combine([
+      dropJson(settings, ["mcpServers", name], c.dryRun),
+      uninstallSkill(skillAt(c, ".claude"), c.dryRun),
+      uninstallClaudeHooks(settings, c.dryRun),
+    ]);
+  },
+};
 
 const qwen = mcpJson({
   id: "qwen", label: "Qwen Code", scope: "both",
@@ -76,11 +93,27 @@ const workbuddy = mcpJson({
   key: "mcpServers", entry: stdioEntry, skill: (c) => skillAt(c, ".codebuddy"),
 });
 
-const devin = mcpJson({
-  id: "devin", label: "Devin", scope: "both",
-  file: (c) => (c.scope === "global" ? join(appDir(c.home, "devin"), "mcp_config.json") : proj(c, ".devin", "mcp_config.json")),
-  key: "mcpServers", entry: claudeEntry, skill: sharedSkill, keepSkill: true,
-});
+const devin: Target = {
+  id: "devin", kind: "native", label: "Devin", scope: "both",
+  install(c) {
+    const mcpFile = c.scope === "global" ? join(appDir(c.home, "devin"), "mcp_config.json") : proj(c, ".devin", "mcp_config.json");
+    const hookFile = c.scope === "global" ? join(appDir(c.home, "devin"), "config.json") : proj(c, ".devin", "hooks.v1.json");
+    return combine([
+      setJson(mcpFile, ["mcpServers", name], claudeEntry(), c.dryRun),
+      installSkill(sharedSkill(c), c.dryRun),
+      c.hooks ? installDevinHooks(hookFile, c.scope === "global", c.dryRun) : ok(HOOKS_NOTE),
+    ]);
+  },
+  uninstall(c) {
+    const mcpFile = c.scope === "global" ? join(appDir(c.home, "devin"), "mcp_config.json") : proj(c, ".devin", "mcp_config.json");
+    const hookFile = c.scope === "global" ? join(appDir(c.home, "devin"), "config.json") : proj(c, ".devin", "hooks.v1.json");
+    return combine([
+      dropJson(mcpFile, ["mcpServers", name], c.dryRun),
+      ok(KEEP_SHARED),
+      uninstallDevinHooks(hookFile, c.scope === "global", c.dryRun),
+    ]);
+  },
+};
 
 const opencode = mcpJson({
   id: "opencode", label: "OpenCode", scope: "both",

@@ -11,7 +11,7 @@ import { manifest } from "../plugin/manifest.ts";
 export type Kind = "native" | "skill" | "plugin";
 export type Status = "ok" | "manual" | "skipped" | "error";
 export interface Result { status: Status; detail: string }
-export interface Ctx { dir: string; home: string; scope: "project" | "global"; dryRun: boolean }
+export interface Ctx { dir: string; home: string; scope: "project" | "global"; dryRun: boolean; hooks: boolean }
 export type Json = Record<string, unknown>;
 
 const { name, markers } = manifest;
@@ -20,6 +20,8 @@ const { name, markers } = manifest;
  *  process.execPath + this path, so they never depend on the npm registry. */
 export const cliPath = fileURLToPath(import.meta.url);
 export const pkgRoot = resolve(cliPath, "..", "..");
+/** Standalone lifecycle-hook bundle built next to cli.js (dist/hook.js). */
+export const hookPath = join(dirname(cliPath), "hook.js");
 export const claudeEntry = (): Json => ({ command: process.execPath, args: [cliPath, "mcp"] });
 export const stdioEntry = (): Json => ({ type: "stdio", ...claudeEntry() });
 export const localEntry = (): Json => ({ type: "local", command: [process.execPath, cliPath, "mcp"], enabled: true });

@@ -13,7 +13,7 @@ remme 是一个 stdio MCP server，用 SQLite + sqlite-vec + Transformers.js 实
 - **存储**：Markdown 文件是 source of truth（人可读可编辑），SQLite 是检索索引（chunks + embedding + FTS5）
 - **检索**：Hybrid search（向量语义匹配 + BM25 关键词匹配），支持 tags/日期过滤缩小搜索空间
 - **Embedding**：Transformers.js 在 Node.js 进程内通过 ONNX 生成 embedding，默认 all-MiniLM-L6-v2（384维），首次使用自动下载缓存
-- **被动 recall**：agent 通过 MCP 工具显式搜索，remme 不主动注入上下文
+- **被动 recall**：agent 通过 MCP 工具显式搜索；可选的生命周期 hook（`install --hooks`，仅 Claude Code/Devin）为 confirmed/verified 且带触发字段的记忆提供有边界的坑警示，默认关闭
 - **知识沉淀**：原始工作记录可以被标记为决策、解决方案、坑、约束或模式，逐步从临时记忆变成可复用知识
 - **跨 Agent 共享**：多个 MCP client 连同一个 remme，共享同一个 SQLite 文件和 memory 目录
 - **决策链追踪**：记录哪一个 Agent 在什么项目中产生、验证、修正或替代了某条知识，支持从问题追溯到方案和验证结果
@@ -382,7 +382,7 @@ src/
 - **HNSW/ANN 索引**：用 sqlite-vec 暴力扫描 + 分类过滤，HNSW 作为未来优化
 - **Session memory**：不索引会话历史，只索引 memory 文件
 - **自动记忆整理/consolidation**：不做无人确认的自动总结、dreaming 或后台 LLM 整理；显式的 memory_promote 和 memory_link 属于本期范围
-- **主动注入/trigger recall**：纯被动 recall，agent 显式搜索；本期不在 session 开始时自动注入上下文
+- **主动注入/trigger recall**：默认纯被动 recall；本期已实现可选的坑警示 hook（`--hooks`，仅 claude/devin，覆盖 PreToolUse/UserPromptSubmit/PostToolUse[Failure]，每会话每记忆一次、失败静默放行），不做 session 启动全量注入
 - **多用户/权限**：单用户本地工具，无权限系统
 - **复杂 Provenance 信任分级**：记录来源、验证者和生命周期事件，但不实现 openclaw 的 owner/agent/untrusted/system 信任模型
 - **Project ranking**：支持 project 作为过滤和关联字段，但不根据活跃度自动排序
@@ -424,4 +424,4 @@ remme 的差异化在于"知识沉淀 + 跨 Agent 决策链 + 被动召回"，�
 5. **temporal decay**：作为可选功能加入，dated 文件按半衰期衰减
 6. **辅助式知识整理**：由本地或远程 LLM 生成候选知识和关系草稿，必须经过 Agent 或用户确认后才能写入 verified 状态
 7. **更丰富的工作流适配**：从 Git、测试结果、代码审查和 goal-acceptance 自动产生 provenance 事件
-8. **有限的上下文注入**：在明确的 session/project 条件满足时提供可选的启动上下文，而不是默认主动注入
+8. **有限的上下文注入**（已实现为可选坑警示 hook）：`install --hooks` 为 Claude Code/Devin 安装 PreToolUse/UserPromptSubmit/PostToolUse[Failure] hook，仅对 confirmed/verified 且带 triggerPaths/triggerCommands/triggerKeywords 的记忆发警示；不做默认主动注入

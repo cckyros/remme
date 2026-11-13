@@ -188,6 +188,7 @@ These rules tell an agent when to recall and when to write. The installer copies
 - After an architecture or technology decision: the decision and its reason (`decision`).
 - After finding a pitfall: the pitfall and how to avoid it (`pitfall`).
 - After confirming a reusable pattern: the pattern (`pattern`).
+- For pitfalls and reusable fixes, set `triggerPaths` / `triggerCommands` / `triggerKeywords` so hook warnings can fire before the mistake repeats.
 - When the user asks you to remember something: write it as asked.
 - Do not write temporary debugging steps, routine operations, or unverified guesses.
 - Use `memory_update` to correct an existing memory instead of writing a duplicate.
@@ -198,6 +199,15 @@ These rules tell an agent when to recall and when to write. The installer copies
 - Related memories: `memory_link` with `derived_from`, `supports`, `corrects`, `supersedes`, `verifies` or `related_to`.
 
 Search results enter the agent's context but are never saved automatically: writing is always an explicit tool call.
+
+### Pitfall warnings (opt-in)
+
+`install --hooks` adds lifecycle hooks for **Claude Code** and **Devin** only. When a prompt, tool call, or tool failure matches a `confirmed`/`verified` memory's trigger fields, the agent gets a short warning with a `memory_read` pointer. `PreToolUse` blocks the call once per session per memory and shows the reason — the retry is allowed. Prompt and failure hooks inject a context note instead. Hooks fail open, never touch the database, and cost ~50 ms per call. Every other target stays explicit-`memory_search` only.
+
+```bash
+node dist/cli.js install --target claude,devin --hooks   # MCP + skill + pitfall-warning hooks
+node dist/cli.js uninstall --target claude               # removes our hooks too
+```
 
 ## MCP tools
 
@@ -244,7 +254,7 @@ Set `REMME_CONFIG` to use a different config file. `dbPath` and `memoryDir` can 
 ## Development
 
 ```bash
-npm run build      # bundle dist/cli.js and generate plugin.json, mcp.json, .mcp.json, skills/
+npm run build      # bundle dist/cli.js + dist/hook.js and generate plugin.json, mcp.json, .mcp.json, skills/
 npm run typecheck
 npm test           # unit + component tests (MCP stdio and installer run against dist/cli.js)
 npm run verify     # all of the above
@@ -253,7 +263,7 @@ npm run verify     # all of the above
 ## Design boundaries
 
 - Vector search is an exact local scan; no HNSW/ANN index yet.
-- Nothing is injected at session start; the agent calls `memory_search` explicitly.
+- Recall is explicit `memory_search` by default; opt-in `--hooks` installs bounded pitfall warnings for Claude Code and Devin (confirmed/verified memories with explicit triggers only, once per session, fail-open).
 - No unattended LLM memory consolidation, no full conversation indexing.
 - Only local embeddings; no remote embedding provider or HTTP/SSE transport yet.
 - Plugin packages are built locally (`dist/` is not committed), so install from a clone.

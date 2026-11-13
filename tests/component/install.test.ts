@@ -141,6 +141,63 @@ test("install: cursor copies the materialized plugin with an absolute MCP entry"
   } finally { done(); }
 });
 
+test("install --hooks: claude settings.json gains remme hook entries, idempotent, uninstall removes only ours", () => {
+  const { project, cli, done } = sandbox();
+  try {
+    const settings = join(project, ".claude", "settings.json");
+    mkdirSync(join(project, ".claude"), { recursive: true });
+    writeFileSync(settings, JSON.stringify({
+      hooks: { PreToolUse: [{ matcher: "Read", hooks: [{ type: "command", command: "other-hook" }] }] },
+    }));
+
+    assert.equal(cli(["install", "--target", "claude", "--hooks"]).code, 0);
+    const installed = json(settings);
+    const ours = (event: string) => (installed.hooks[event] ?? []).filter((e: any) => JSON.stringify(e).includes("remme-hook"));
+    assert.equal(ours("PreToolUse").length, 1);
+    assert.equal(ours("UserPromptSubmit").length, 1);
+    assert.equal(ours("PostToolUseFailure").length, 1);
+    assert.match(JSON.stringify(installed.hooks.PreToolUse), /remme-hook pretool claude/);
+    // Foreign entries preserved.
+    assert.ok(JSON.stringify(installed.hooks.PreToolUse).includes("other-hook"));
+
+    // Idempotent: still exactly one remme entry per event.
+    cli(["install", "--target", "claude", "--hooks"]);
+    const again = json(settings);
+    for (const event of ["PreToolUse", "UserPromptSubmit", "PostToolUseFailure"]) {
+      assert.equal((again.hooks[event] ?? []).filter((e: any) => JSON.stringify(e).includes("remme-hook")).length, 1);
+    }
+
+    // Uninstall (without --hooks) still removes our hook entries only.
+    assert.equal(cli(["uninstall", "--target", "claude"]).code, 0);
+    const after = json(settings);
+    assert.equal(JSON.stringify(after).includes("remme-hook"), false);
+    assert.ok(JSON.stringify(after.hooks.PreToolUse).includes("other-hook"));
+  } finally { done(); }
+});
+
+test("install without --hooks writes no hook entries; devin --hooks writes hooks.v1.json", () => {
+  const { project, cli, done } = sandbox();
+  try {
+    assert.equal(cli(["install", "--target", "claude"]).code, 0);
+    assert.equal(json(join(project, ".claude", "settings.json")).hooks, undefined);
+
+    assert.equal(cli(["install", "--target", "devin", "--hooks"]).code, 0);
+    const hooksFile = join(project, ".devin", "hooks.v1.json");
+    const hooks = json(hooksFile);
+    // hooks.v1.json is the bare hooks object (no "hooks" wrapper).
+    assert.equal(hooks.hooks, undefined);
+    assert.equal((hooks.PreToolUse ?? []).filter((e: any) => JSON.stringify(e).includes("remme-hook")).length, 1);
+    assert.equal((hooks.UserPromptSubmit ?? []).filter((e: any) => JSON.stringify(e).includes("remme-hook")).length, 1);
+    assert.equal((hooks.PostToolUse ?? []).filter((e: any) => JSON.stringify(e).includes("remme-hook")).length, 1);
+    assert.match(JSON.stringify(hooks.PreToolUse), /remme-hook pretool devin/);
+    assert.ok(existsSync(join(project, ".devin", "mcp_config.json")));
+
+    cli(["uninstall", "--target", "devin"]);
+    const after = json(hooksFile);
+    assert.equal(JSON.stringify(after).includes("remme-hook"), false);
+  } finally { done(); }
+});
+
 test("install: unknown target and missing --target fail with a clear message", () => {
   const { cli, done } = sandbox();
   try {

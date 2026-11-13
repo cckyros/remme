@@ -16,6 +16,9 @@ export interface MemoryMetadata {
   embeddingDims?: number;
   embeddingModel?: string;
   originalRecordId?: string;
+  triggerPaths?: string[];
+  triggerCommands?: string[];
+  triggerKeywords?: string[];
 }
 
 export interface Chunk { text: string; startLine: number; endLine: number; metadata: MemoryMetadata; }
@@ -40,6 +43,9 @@ export function parseMarkdown(source: string, fallbackAgent = "unknown"): { meta
     try { const parsed = JSON.parse(value); return Array.isArray(parsed) ? parsed.map(String) : []; } catch { return value.split(",").map((x) => x.trim()).filter(Boolean); }
   };
   const importance = Number(get("importance"));
+  const triggerPaths = list("triggerPaths");
+  const triggerCommands = list("triggerCommands");
+  const triggerKeywords = list("triggerKeywords");
   return {
     metadata: {
       importance: Number.isFinite(importance) ? Math.min(10, Math.max(1, importance)) : 5,
@@ -47,6 +53,9 @@ export function parseMarkdown(source: string, fallbackAgent = "unknown"): { meta
       project: get("project"), agent: get("agent") ?? fallbackAgent, created: get("created") ?? new Date().toISOString(), entities: list("entities"),
       origin: get("origin") ?? "native", importId: get("importId"), source: get("source"), originalPath: get("originalPath"), category: get("category"),
       sourceId: number("sourceId"), embeddingDims: number("embeddingDims"), embeddingModel: get("embeddingModel"), originalRecordId: get("originalRecordId"),
+      ...(triggerPaths.length ? { triggerPaths } : {}),
+      ...(triggerCommands.length ? { triggerCommands } : {}),
+      ...(triggerKeywords.length ? { triggerKeywords } : {}),
     },
     body: match?.[2] ?? source,
   };
@@ -56,6 +65,10 @@ export function renderMarkdown(content: string, metadata: Partial<MemoryMetadata
   const created = metadata.created ?? new Date().toISOString();
   const encode = (value: string | string[]) => JSON.stringify(value).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
   const lines = ["---", `importance: ${metadata.importance ?? 5}`, `tags: ${encode(metadata.tags ?? [])}`, `knowledgeType: ${encode(metadata.knowledgeType ?? "observation")}`, `status: ${encode(metadata.status ?? "candidate")}`, `project: ${encode(metadata.project ?? "")}`, `created: ${encode(created)}`, `agent: ${encode(metadata.agent ?? agent)}`, `entities: ${encode(metadata.entities ?? [])}`];
+  for (const key of ["triggerPaths", "triggerCommands", "triggerKeywords"] as const) {
+    const value = metadata[key];
+    if (value?.length) lines.push(`${key}: ${encode(value)}`);
+  }
   for (const key of ["origin", "importId", "source", "originalPath", "category", "embeddingModel", "originalRecordId"] as const) {
     const value = metadata[key];
     if (value !== undefined) lines.push(`${key}: ${encode(value)}`);
