@@ -3,7 +3,7 @@
 // JSON response on stdout. Always exits 0 and stays silent on any problem —
 // a hook must never block the agent.
 //
-// Usage: node dist/hook.js remme-hook <prompt|pretool|posttool> [claude|devin]
+// Usage: node dist/hook.js remme-hook <prompt|pretool|posttool> [claude|devin|cursor|codex|opencode]
 // The "remme-hook" literal is the installer's ownership marker.
 import { loadConfig } from "./config.ts";
 import {
@@ -14,15 +14,16 @@ import {
 const MAX_INPUT = 64_000;
 const SELF_TIMEOUT_MS = 8_000;
 
-type Platform = "claude" | "devin";
+type Platform = "claude" | "devin" | "cursor" | "codex" | "opencode";
 type Event = "prompt" | "pretool" | "posttool";
+const PLATFORMS: readonly string[] = ["claude", "devin", "cursor", "codex", "opencode"];
 
 function detectPlatform(arg: string | undefined): Platform {
   // The host environment wins over the installed arg: Devin also executes
   // .claude/settings.json hooks, and DEVIN_PROJECT_DIR is set for hook commands.
   if (process.env.DEVIN_PROJECT_DIR) return "devin";
   if (process.env.CLAUDE_PROJECT_DIR) return "claude";
-  return arg === "devin" ? "devin" : "claude";
+  return PLATFORMS.includes(arg ?? "") ? (arg as Platform) : "claude";
 }
 
 function readStdin(): Promise<string> {
@@ -64,18 +65,25 @@ function toolIO(input: Record<string, unknown>): { paths: string[]; commands: st
 
 function eventName(platform: Platform, event: Event): string {
   if (event === "prompt") return "UserPromptSubmit";
-  if (event === "posttool") return platform === "devin" ? "PostToolUse" : "PostToolUseFailure";
+  if (event === "posttool") return platform === "claude" ? "PostToolUseFailure" : "PostToolUse";
   return "PreToolUse";
 }
 
-function additionalContext(name: string, context: string): void {
+function additionalContext(platform: Platform, name: string, context: string): void {
+  // Cursor output fields are snake_case and top-level; there is no event name.
+  if (platform === "cursor") {
+    process.stdout.write(JSON.stringify({ additional_context: context }) + "\n");
+    return;
+  }
   process.stdout.write(JSON.stringify({
     hookSpecificOutput: { hookEventName: name, additionalContext: context },
   }) + "\n");
 }
 
 function preToolDecision(platform: Platform, reason: string): void {
-  if (platform === "devin") {
+  if (platform === "cursor") {
+    process.stdout.write(JSON.stringify({ permission: "deny", user_message: reason, agent_message: reason }) + "\n");
+  } else if (platform === "devin" || platform === "opencode") {
     process.stdout.write(JSON.stringify({ decision: "block", reason }) + "\n");
   } else {
     process.stdout.write(JSON.stringify({
@@ -105,8 +113,11 @@ async function main(): Promise<void> {
   } catch { return; }
 
   const config = loadConfig();
-  const sessionId = str(input.session_id) ?? "unknown";
-  const cwd = str(input.cwd) ?? process.env.DEVIN_PROJECT_DIR ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+  // Cursor sends conversation_id; the rest send session_id.
+  const sessionId = str(input.session_id) ?? str(input.conversation_id) ?? "unknown";
+  const roots = Array.isArray(input.workspace_roots) ? input.workspace_roots : [];
+  const cwd = str(input.cwd) ?? str(roots[0])
+    ?? process.env.DEVIN_PROJECT_DIR ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
   const entries = warningsForHook(config);
   if (!entries.length) return;
 
@@ -120,12 +131,15 @@ async function main(): Promise<void> {
   const toolText = commands.join("\n");
 
   if (event === "prompt") {
+    // Cursor's beforeSubmitPrompt can only continue/block — it cannot inject
+    // context, so prompt warnings are not wired for it.
+    if (platform === "cursor") return;
     const text = str(input.prompt) ?? "";
     const hits = fresh(matchWarnings(entries, { text, cwd }), ctxSeen);
     if (!hits.length) return;
     for (const h of hits) { session.ctx.push(h.path); dirty = true; }
     session.updatedAt = new Date().toISOString();
-    additionalContext(eventName(platform, event), formatWarnings(hits));
+    additionalContext(platform, eventName(platform, event), formatWarnings(hits));
   } else if (event === "pretool") {
     const hits = fresh(matchWarnings(entries, { paths, commands, text: toolText, cwd }), blkSeen);
     if (!hits.length) return;
@@ -133,24 +147,44 @@ async function main(): Promise<void> {
     session.updatedAt = new Date().toISOString();
     preToolDecision(platform, formatBlockReason(hits));
   } else {
-    // posttool: Devin fires PostToolUse for every tool — only failures matter.
-    // Claude Code has a dedicated PostToolUseFailure event (always a failure).
-    if (platform === "devin") {
-      const response = isObj(input.tool_response) ? input.tool_response : {};
-      if (response.success !== false) return;
-    }
+    // posttool: Devin and Codex fire PostToolUse for every tool — only failures
+    // matter. Claude Code and Cursor have dedicated failure-only events.
+    if (!toolFailed(platform, input)) return;
     const response = isObj(input.tool_response) ? input.tool_response : {};
-    const errorText = [str(input.error), str(response.error), str(response.output)]
+    const respText = typeof input.tool_response === "string" ? input.tool_response.slice(0, 2000) : "";
+    // Codex's tool_response shape varies by tool — a truncated JSON dump keeps
+    // error keywords (stderr/message/...) matchable regardless of field names.
+    const respJson = isObj(input.tool_response) ? JSON.stringify(input.tool_response).slice(0, 1500) : "";
+    const errorText = [str(input.error), str(input.error_message), str(response.error), str(response.output), respText, respJson]
       .filter(Boolean).join("\n").slice(0, 4000);
     const blob = `${str(input.tool_name) ?? ""}\n${JSON.stringify(input.tool_input ?? {}).slice(0, 2000)}\n${errorText}`;
     const hits = fresh(matchWarnings(entries, { paths, commands, text: blob, cwd }), ctxSeen);
     if (!hits.length) return;
     for (const h of hits) { session.ctx.push(h.path); dirty = true; }
     session.updatedAt = new Date().toISOString();
-    additionalContext(eventName(platform, event), formatWarnings(hits));
+    additionalContext(platform, eventName(platform, event), formatWarnings(hits));
   }
 
   if (dirty) saveHookState(config, state);
+}
+
+/** Whether a posttool payload represents a failed tool call. Codex's
+ *  tool_response shape is tool-specific, so only explicit failure markers
+ *  count; anything ambiguous stays silent (fail-open). */
+function toolFailed(platform: Platform, input: Record<string, unknown>): boolean {
+  const response = input.tool_response;
+  if (platform === "devin") return isObj(response) && response.success === false;
+  if (platform !== "codex") return true; // claude PostToolUseFailure / cursor postToolUseFailure
+  if (isObj(response)) {
+    if (response.success === false || response.isError === true || response.is_error === true) return true;
+    const code = response.exitCode ?? response.exit_code ?? response.exitStatus ?? response.statusCode;
+    if (typeof code === "number" && code !== 0) return true;
+    return typeof response.error === "string" && response.error.trim().length > 0;
+  }
+  if (typeof response === "string") {
+    return /\b(exit(ed)? (with )?(code|status)\s*[1-9]\d*|command failed|failed with exit|error:|exception|traceback)\b/i.test(response);
+  }
+  return false;
 }
 
 // Fail-open: any unexpected error exits silently with status 0.

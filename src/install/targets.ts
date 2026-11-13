@@ -12,7 +12,10 @@ import {
   claudeEntry, cliPath, combine, dropJson, error, hasCli, installSkill, localEntry, manual, materialize,
   ok, pluginReady, read, removeBlock, runCli, setJson, skipped, stdioEntry, uninstallSkill, upsertBlock, write,
 } from "./shared.ts";
-import { installClaudeHooks, installDevinHooks, uninstallClaudeHooks, uninstallDevinHooks } from "./hooks.ts";
+import {
+  installClaudeHooks, installCodexHooks, installCursorHooks, installDevinHooks, installOpenCodePlugin,
+  uninstallClaudeHooks, uninstallCodexHooks, uninstallCursorHooks, uninstallDevinHooks, uninstallOpenCodePlugin,
+} from "./hooks.ts";
 import type { Ctx, Kind, Result } from "./shared.ts";
 
 export interface Target {
@@ -115,11 +118,29 @@ const devin: Target = {
   },
 };
 
-const opencode = mcpJson({
-  id: "opencode", label: "OpenCode", scope: "both",
-  file: (c) => (c.scope === "global" ? join(appDir(c.home, "opencode"), "opencode.json") : proj(c, "opencode.json")),
-  key: "mcp", entry: localEntry, skill: sharedSkill, keepSkill: true,
-});
+const opencode: Target = {
+  id: "opencode", kind: "native", label: "OpenCode", scope: "both",
+  install(c) {
+    const config = c.scope === "global" ? join(appDir(c.home, "opencode"), "opencode.json") : proj(c, "opencode.json");
+    // OpenCode discovers plugins under <config>/.opencode/plugins (project)
+    // and ~/.config/opencode/plugins (global) — documented XDG path on every OS.
+    const pluginRoot = c.scope === "global" ? join(c.home, ".config", "opencode") : proj(c, ".opencode");
+    return combine([
+      setJson(config, ["mcp", name], localEntry(), c.dryRun),
+      installSkill(sharedSkill(c), c.dryRun),
+      c.hooks ? installOpenCodePlugin(pluginRoot, c.dryRun) : ok(HOOKS_NOTE),
+    ]);
+  },
+  uninstall(c) {
+    const config = c.scope === "global" ? join(appDir(c.home, "opencode"), "opencode.json") : proj(c, "opencode.json");
+    const pluginRoot = c.scope === "global" ? join(c.home, ".config", "opencode") : proj(c, ".opencode");
+    return combine([
+      dropJson(config, ["mcp", name], c.dryRun),
+      ok(KEEP_SHARED),
+      uninstallOpenCodePlugin(pluginRoot, c.dryRun),
+    ]);
+  },
+};
 
 const kilo = mcpJson({
   id: "kilo", label: "Kilo Code", scope: "both",
@@ -131,6 +152,7 @@ const codex: Target = {
   id: "codex", kind: "native", label: "Codex", scope: "both",
   install(c) {
     const toml = join(at(c, ".codex"), "config.toml");
+    const hookFile = join(at(c, ".codex"), "hooks.json");
     const raw = read(toml) ?? "";
     const conflict = raw.includes(`[mcp_servers."${name}"]`) && !raw.includes(TOML_START);
     const block = `[mcp_servers."${name}"]\n${tomlCommand()}\ntool_timeout_sec = 180`;
@@ -142,6 +164,9 @@ const codex: Target = {
       upsertBlock(agents, markers.agentsStart, markers.agentsEnd, memoryRules, c.dryRun),
       c.scope === "project" ? installSkill(sharedSkill(c), c.dryRun) : ok("shared .agents/skills is project-level for Codex (global skipped)"),
       fixCodexModels(c),
+      c.hooks
+        ? combine([installCodexHooks(hookFile, c.dryRun), ok("Codex: non-managed hooks stay inactive until trusted — review with /hooks")])
+        : ok(HOOKS_NOTE),
     ]);
   },
   uninstall(c) {
@@ -151,6 +176,7 @@ const codex: Target = {
       removeBlock(toml, TOML_START, TOML_END, c.dryRun),
       removeBlock(agents, markers.agentsStart, markers.agentsEnd, c.dryRun),
       ok(KEEP_SHARED),
+      uninstallCodexHooks(join(at(c, ".codex"), "hooks.json"), c.dryRun),
     ]);
   },
 };
@@ -274,19 +300,24 @@ const cursor: Target = {
     if (missing) return missing;
     const dest = join(c.home, ".cursor", "plugins", "local", markers.cursorDir);
     if (!existsSync(join(c.home, ".cursor"))) return manual(`Cursor not detected (~/.cursor missing). Copy ${materialize(c.home, true)} to ${dest} by hand.`);
-    if (c.dryRun) return ok(`[dry-run] would copy the plugin dir to ${dest}`);
+    const hooksResult = c.hooks ? installCursorHooks(join(c.home, ".cursor", "hooks.json"), c.dryRun) : ok(HOOKS_NOTE);
+    if (c.dryRun) return combine([ok(`[dry-run] would copy the plugin dir to ${dest}`), hooksResult]);
     const dir = materialize(c.home, false);
     mkdirSync(dirname(dest), { recursive: true });
     cpSync(dir, dest, { recursive: true, force: true });
     write(join(dest, markers.cursorMarkerFile), `${markers.cursorMarker}\n`, false);
-    return ok(`copied plugin to ${dest} — run "Developer: Reload Window" in Cursor`);
+    return combine([ok(`copied plugin to ${dest} — run "Developer: Reload Window" in Cursor`), hooksResult]);
   },
   uninstall(c) {
     const dest = join(c.home, ".cursor", "plugins", "local", markers.cursorDir);
-    if (!existsSync(dest)) return ok(`not present: ${dest}`);
-    if (!existsSync(join(dest, markers.cursorMarkerFile))) return skipped(`${dest} has no marker — user-authored, kept`);
-    if (!c.dryRun) rmSync(dest, { recursive: true, force: true });
-    return ok(`${c.dryRun ? "would remove" : "removed"} ${dest}`);
+    let pluginResult: Result;
+    if (!existsSync(dest)) pluginResult = ok(`not present: ${dest}`);
+    else if (!existsSync(join(dest, markers.cursorMarkerFile))) pluginResult = skipped(`${dest} has no marker — user-authored, kept`);
+    else {
+      if (!c.dryRun) rmSync(dest, { recursive: true, force: true });
+      pluginResult = ok(`${c.dryRun ? "would remove" : "removed"} ${dest}`);
+    }
+    return combine([pluginResult, uninstallCursorHooks(join(c.home, ".cursor", "hooks.json"), c.dryRun)]);
   },
 };
 

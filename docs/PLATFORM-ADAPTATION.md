@@ -68,7 +68,7 @@ export const manifest: PluginManifest = {
     { key: "vectorWeight", label: "Vector search weight", type: "number", env: "REMME_VECTOR_WEIGHT", default: 0.7 },
     { key: "textWeight", label: "Keyword search weight", type: "number", env: "REMME_TEXT_WEIGHT", default: 0.3 },
     { key: "maxResults", label: "Max search results", type: "number", env: "REMME_MAX_RESULTS", default: 6 },
-    { key: "minScore", label: "Min similarity threshold", type: "number", env: "REMME_MIN_SCORE", default: 0.0 },
+    { key: "minScore", label: "Min similarity threshold", type: "number", env: "REMME_MIN_SCORE", default: 0.25 },
     { key: "ftsTokenizer", label: "FTS5 tokenizer", type: "string", env: "REMME_FTS_TOKENIZER", default: "trigram" },
     { key: "mmrLambda", label: "MMR lambda", type: "number", env: "REMME_MMR_LAMBDA", default: 0.7 },
     { key: "mmrEnabled", label: "Enable MMR diversity", type: "boolean", env: "REMME_MMR_ENABLED", default: true },
@@ -77,7 +77,7 @@ export const manifest: PluginManifest = {
   tools, // 从 tools.ts 导入
 
   skill: { filename: "SKILL.md" },
-  // hook 是可选能力：install --hooks 时为支持的平台写生命周期 hook（仅 claude/devin）
+  // hook 是可选能力：install --hooks 时为支持的平台写生命周期 hook（claude/devin/cursor/codex 写 JSON 配置，opencode 写插件文件）
 };
 ```
 
@@ -179,7 +179,7 @@ export interface TargetAdapter {
 }
 ```
 
-**remme 特殊处理**：hook 是可选能力——`install --hooks` 时为 Claude Code 在 `.claude/settings.json` 写 hooks，为 Devin 写 `.devin/hooks.v1.json`（项目级）或 `config.json` 的 hooks 键（全局）；其余目标不写 hook。默认只写 MCP 配置 + skill。
+**remme 特殊处理**：hook 是可选能力——`install --hooks` 时为 Claude Code 在 `.claude/settings.json` 写 hooks，为 Devin 写 `.devin/hooks.v1.json`（项目级）或 `config.json` 的 hooks 键（全局）；Cursor 写 `~/.cursor/hooks.json`（`version: 1` + 扁平条目）；Codex 写 `.codex/hooks.json` 或 `~/.codex/hooks.json`（Claude 式嵌套条目，需 `/hooks` 信任后生效）；OpenCode 在 `.opencode/plugins/`（项目）或 `~/.config/opencode/plugins/`（全局）生成 `remme.js` V2 插件。其余目标不写 hook。默认只写 MCP 配置 + skill。
 
 ### 2. Codex（`native-codex.ts`）
 
@@ -198,6 +198,8 @@ tool_timeout_sec = 180
 
 **特殊处理**：Codex 的 `models.json` 有一个 bug（openai/codex#36382），`supports_search_tool: true` 会隐藏所有 `mcp__*` 工具。适配器自动将其翻转为 `false`。
 
+**坑警示 hook**（`--hooks`）：写 `<scope>/.codex/hooks.json`（项目）或 `~/.codex/hooks.json`（全局），结构与 Claude Code 相同（事件 → matcher 组 → `type:"command"` 处理器）。事件为 `PreToolUse`/`UserPromptSubmit`/`PostToolUse`，matcher 覆盖 `Bash|apply_patch|Edit|Write|mcp__`。**注意**：非托管 hook 需用户在 Codex 内用 `/hooks` 审查信任后才生效；`PostToolUse` 对成功调用也触发，hook 内部按 `tool_response` 的失败标记过滤（exit_code≠0、success=false、error 字段等）。
+
 ### 3. OpenCode（`native-opencode.ts`）
 
 **配置格式**（command 是数组）：
@@ -214,6 +216,8 @@ tool_timeout_sec = 180
   }
 }
 ```
+
+**坑警示 hook**（`--hooks`）：OpenCode 没有 JSON hook 配置，适配器在 `.opencode/plugins/remme.js`（项目）或 `~/.config/opencode/plugins/remme.js`（全局）生成一个 V2 插件：`ctx.tool.hook("execute.before")` 把工具名和参数转发给 `dist/hook.js`（platform=`opencode`），命中时 `throw` 阻止执行（每会话每记忆一次，重试放行）。插件是纯 `node:` 内置模块的默认导出对象，不依赖 `@opencode/plugin`（本地插件无法解析该包，opencode#50434）。仅覆盖工具执行前警示；OpenCode 插件 API 没有对应的提示词注入/失败后上下文通道。
 
 ### 4. GitHub Copilot（`plugin-agents.ts`）
 
@@ -233,7 +237,9 @@ openclaw-dist/ — OpenClaw 编译产物
 
 ### 5. Cursor（`plugin-agents.ts`）
 
-**安装方式**：复制物化目录到 `~/.cursor/plugins/remme/`，写入 marker 文件 `.remme-managed`。
+**安装方式**：复制物化目录到 `~/.cursor/plugins/remme/`（实际为 `plugins/local/remme`），写入 marker 文件 `.remme-managed`。
+
+**坑警示 hook**（`--hooks`，仅全局 scope）：写 `~/.cursor/hooks.json`，结构为 `{"version": 1, "hooks": {"preToolUse": [...], "postToolUseFailure": [...]}}`——事件名 camelCase、条目扁平（`{command, matcher, timeout}`，无嵌套 `hooks` 数组）。stdin 用 `conversation_id`/`tool_name`/`tool_input`/`workspace_roots`；拦截输出为 `{permission:"deny", user_message, agent_message}`，失败后注入为顶层 `additional_context`（snake_case）。Cursor 的 `beforeSubmitPrompt` 不能注入上下文，因此不接提示词警示；`preToolUse`/`postToolUseFailure` 的 matcher 覆盖 `Shell|Read|Write|Delete|Task|MCP:*`。项目级 `.cursor/hooks.json` 目前未安装（cursor target 仅全局）。
 
 ### 6. Trae（`skill-agents.ts`）
 

@@ -202,10 +202,10 @@ Search results enter the agent's context but are never saved automatically: writ
 
 ### Pitfall warnings (opt-in)
 
-`install --hooks` adds lifecycle hooks for **Claude Code** and **Devin** only. When a prompt, tool call, or tool failure matches a `confirmed`/`verified` memory's trigger fields, the agent gets a short warning with a `memory_read` pointer. `PreToolUse` blocks the call once per session per memory and shows the reason — the retry is allowed. Prompt and failure hooks inject a context note instead. Hooks fail open, never touch the database, and cost ~50 ms per call. Every other target stays explicit-`memory_search` only.
+`install --hooks` adds pitfall-warning hooks for **Claude Code, Devin, Cursor, Codex, and OpenCode**. When a tool call or tool failure matches a `confirmed`/`verified` memory's trigger fields, the agent gets a short warning with a `memory_read` pointer. `PreToolUse` blocks the call once per session per memory and shows the reason — the retry is allowed. Prompt and failure hooks inject a context note instead (Cursor cannot inject prompt context, and OpenCode warns on tool calls only). Codex hooks stay inactive until trusted via `/hooks`. Hooks fail open, never touch the database, and cost ~50 ms per call. Every other target stays explicit-`memory_search` only.
 
 ```bash
-node dist/cli.js install --target claude,devin --hooks   # MCP + skill + pitfall-warning hooks
+node dist/cli.js install --target claude,devin,cursor,codex,opencode --hooks
 node dist/cli.js uninstall --target claude               # removes our hooks too
 ```
 
@@ -263,7 +263,7 @@ npm run verify     # all of the above
 ## Design boundaries
 
 - Vector search is an exact local scan; no HNSW/ANN index yet.
-- Recall is explicit `memory_search` by default; opt-in `--hooks` installs bounded pitfall warnings for Claude Code and Devin (confirmed/verified memories with explicit triggers only, once per session, fail-open).
+- Recall is explicit `memory_search` by default; opt-in `--hooks` installs bounded pitfall warnings for Claude Code, Devin, Cursor, Codex and OpenCode (confirmed/verified memories with explicit triggers only, once per session, fail-open).
 - No unattended LLM memory consolidation, no full conversation indexing.
 - Only local embeddings; no remote embedding provider or HTTP/SSE transport yet.
 - Plugin packages are built locally (`dist/` is not committed), so install from a clone.

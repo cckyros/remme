@@ -198,6 +198,99 @@ test("install without --hooks writes no hook entries; devin --hooks writes hooks
   } finally { done(); }
 });
 
+test("install --hooks: codex hooks.json uses nested entries and preserves foreign hooks", () => {
+  const { project, cli, done } = sandbox();
+  try {
+    const file = join(project, ".codex", "hooks.json");
+    mkdirSync(join(project, ".codex"), { recursive: true });
+    writeFileSync(file, JSON.stringify({
+      hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "other-codex-hook" }] }] },
+    }));
+
+    const installOut = cli(["install", "--target", "codex", "--hooks"]).out;
+    assert.match(installOut, /\/hooks/);
+    const installed = json(file);
+    const ours = (event: string) => (installed.hooks[event] ?? []).filter((e: any) => JSON.stringify(e).includes("remme-hook"));
+    assert.equal(ours("PreToolUse").length, 1);
+    assert.equal(ours("UserPromptSubmit").length, 1);
+    assert.equal(ours("PostToolUse").length, 1);
+    assert.match(JSON.stringify(installed.hooks.PreToolUse), /remme-hook pretool codex/);
+    assert.ok(JSON.stringify(installed.hooks.PreToolUse).includes("other-codex-hook"));
+
+    cli(["install", "--target", "codex", "--hooks"]);
+    const again = json(file);
+    for (const event of ["PreToolUse", "UserPromptSubmit", "PostToolUse"]) {
+      assert.equal((again.hooks[event] ?? []).filter((e: any) => JSON.stringify(e).includes("remme-hook")).length, 1);
+    }
+
+    assert.equal(cli(["uninstall", "--target", "codex"]).code, 0);
+    const after = json(file);
+    assert.equal(JSON.stringify(after).includes("remme-hook"), false);
+    assert.ok(JSON.stringify(after.hooks.PreToolUse).includes("other-codex-hook"));
+  } finally { done(); }
+});
+
+test("install --hooks: cursor hooks.json is versioned with flat snake_case-free entries", () => {
+  const { home, cli, done } = sandbox();
+  try {
+    mkdirSync(join(home, ".cursor"), { recursive: true });
+    assert.equal(cli(["install", "--target", "cursor", "--hooks", "--scope", "global"]).code, 0);
+    const file = join(home, ".cursor", "hooks.json");
+    const hooks = json(file);
+    assert.equal(hooks.version, 1);
+    const pre = (hooks.hooks.preToolUse ?? []).filter((e: any) => JSON.stringify(e).includes("remme-hook"));
+    assert.equal(pre.length, 1);
+    // Flat entry shape: {command, timeout, matcher} — no nested hooks array.
+    assert.equal(pre[0].hooks, undefined);
+    assert.equal(typeof pre[0].command, "string");
+    assert.match(pre[0].command, /remme-hook pretool cursor/);
+    assert.equal(typeof pre[0].matcher, "string");
+    assert.equal((hooks.hooks.postToolUseFailure ?? []).filter((e: any) => JSON.stringify(e).includes("remme-hook")).length, 1);
+    // No prompt event is wired for cursor.
+    assert.equal(hooks.hooks.beforeSubmitPrompt, undefined);
+
+    cli(["install", "--target", "cursor", "--hooks", "--scope", "global"]);
+    assert.equal(json(file).hooks.preToolUse.filter((e: any) => JSON.stringify(e).includes("remme-hook")).length, 1);
+
+    assert.equal(cli(["uninstall", "--target", "cursor", "--scope", "global"]).code, 0);
+    const after = json(file);
+    assert.equal(JSON.stringify(after).includes("remme-hook"), false);
+  } finally { done(); }
+});
+
+test("install --hooks: opencode writes a plugin file; foreign remme.js is preserved", () => {
+  const { project, cli, done } = sandbox();
+  try {
+    // Without --hooks no plugin file appears.
+    assert.equal(cli(["install", "--target", "opencode"]).code, 0);
+    assert.equal(existsSync(join(project, ".opencode", "plugins", "remme.js")), false);
+
+    assert.equal(cli(["install", "--target", "opencode", "--hooks"]).code, 0);
+    const plugin = join(project, ".opencode", "plugins", "remme.js");
+    assert.equal(existsSync(plugin), true);
+    const src = readFileSync(plugin, "utf8");
+    assert.match(src, /remme-hook/);
+    assert.match(src, /"pretool", "opencode"/);
+    assert.match(src, /execute\.before/);
+    assert.match(src, /export default/);
+
+    // Idempotent.
+    cli(["install", "--target", "opencode", "--hooks"]);
+    assert.equal(readFileSync(plugin, "utf8"), src);
+
+    assert.equal(cli(["uninstall", "--target", "opencode"]).code, 0);
+    assert.equal(existsSync(plugin), false);
+
+    // A user-authored remme.js without our marker is never removed.
+    mkdirSync(join(project, ".opencode", "plugins"), { recursive: true });
+    writeFileSync(plugin, "export default { id: 'mine' };\n");
+    cli(["install", "--target", "opencode", "--hooks"]);
+    assert.equal(readFileSync(plugin, "utf8"), "export default { id: 'mine' };\n");
+    cli(["uninstall", "--target", "opencode"]);
+    assert.equal(readFileSync(plugin, "utf8"), "export default { id: 'mine' };\n");
+  } finally { done(); }
+});
+
 test("install: unknown target and missing --target fail with a clear message", () => {
   const { cli, done } = sandbox();
   try {

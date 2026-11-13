@@ -1,6 +1,6 @@
 # 踩坑警示（Pitfall Warning）规划
 
-> 状态：**P0–P4 已实现**（2026-11-13）。`src/triggers.ts` + `src/hook.ts`（`dist/hook.js`）、`install --hooks`（claude/devin）、触发字段进 frontmatter/MCP schema、文档已同步；P5 实机验证待做。决策 D1–D4 按下文"建议"执行。
+> 状态：**P0–P4 已实现**（2026-11-13）。`src/triggers.ts` + `src/hook.ts`（`dist/hook.js`）、`install --hooks`（claude/devin/cursor/codex/opencode）、触发字段进 frontmatter/MCP schema、文档已同步；P5 实机验证待做。决策 D1–D4 按下文"建议"执行。
 > 本文归纳调研结论、决策项和分阶段计划，作为实现依据保留。
 
 ## 目标
@@ -68,6 +68,18 @@ claude-mem 本身没有"踩坑警示"。它的 `PreToolUse` hook 匹配的是读
 - **Devin 默认也会读取 `.claude/` 下的 hook。** 同一个项目两边都装，可能触发两次。
 
 其余 20 个安装目标的 hook 支持情况没有核实。
+
+**实现更新（2026-11）**：调研后又适配了三个平台，能力差异如下——
+
+| 能力 | Cursor | Codex | OpenCode |
+|------|--------|-------|----------|
+| 配置位置 | `~/.cursor/hooks.json`（`version:1`，扁平条目，仅全局） | `.codex/hooks.json` / `~/.codex/hooks.json`（Claude 式嵌套） | `.opencode/plugins/remme.js` 或 `~/.config/opencode/plugins/remme.js`（V2 插件，非 JSON） |
+| 事件 | `preToolUse`、`postToolUseFailure`（camelCase） | `PreToolUse`、`UserPromptSubmit`、`PostToolUse`（PascalCase） | `ctx.tool.hook("execute.before")` |
+| 动手前警示 | `{permission:"deny", user_message, agent_message}` | `hookSpecificOutput.permissionDecision:"deny"`（同 Claude） | 插件 `throw` 阻止执行 |
+| 提示词注入 | 无（`beforeSubmitPrompt` 不能注入上下文，不接） | `hookSpecificOutput.additionalContext` | 无对应通道 |
+| 失败后注入 | 顶层 `additional_context`（snake_case） | `hookSpecificOutput.additionalContext`；`PostToolUse` 对成功也触发，hook 按 `tool_response` 失败标记过滤 | 无对应通道 |
+| 会话标识 | `conversation_id` | `session_id` | `event.sessionID`（缺失时回退 pid） |
+| 特殊注意 | 项目级 `.cursor/hooks.json` 未安装 | 非托管 hook 需 `/hooks` 信任后才生效 | V1 插件格式在 V2 不运行；插件用纯默认导出避免 `@opencode/plugin` 解析问题（opencode#50434） |
 
 ### 实测数据
 
@@ -161,7 +173,7 @@ Read details with memory_read(path) before continuing.
 | P0 | 确认 D1–D4 | 本文"待决策"一节更新为已决定 | 用户确认 |
 | P1 | 触发字段 + 匹配核心，不含 hook | frontmatter 读写、索引列、`memory_write` / `memory_update` 接受触发字段、纯函数匹配器、`remme check` 命令 | 单元测试；上面三条实测查询在无触发字段时不产生警示 |
 | P2 | hook 运行时 | `remme hook <event>`：输入归一化、只读查询、去重、预算、两个平台的输出格式 | 组件测试：用样例输入驱动 `dist/cli.js`；异常路径输出空对象且退出码为 0；测量耗时 |
-| P3 | 安装器 | `claude` / `devin` 目标的 hook 写入与卸载，`--hooks` 开关 | 组件测试（临时 HOME）：幂等、保留用户已有 hook、卸载只删自己的 |
+| P3 | 安装器 | `claude` / `devin` / `cursor` / `codex` / `opencode` 目标的 hook 写入与卸载，`--hooks` 开关 | 组件测试（临时 HOME）：幂等、保留用户已有 hook、卸载只删自己的 |
 | P4 | 规则与文档 | `agents-fragment.md` 增加"写坑时填触发条件"；`SPEC.md`、`PLATFORM-ADAPTATION.md`、中英文 README 更新设计边界 | 文档里的事实与代码一致 |
 | P5 | 实机验证 | 在真实 Claude Code 和 Devin 会话里各跑一遍三个挂载点 | 记录实际表现和耗时；Devin 用 `/hooks` 确认加载 |
 
@@ -204,3 +216,7 @@ Read details with memory_read(path) before continuing.
 6. Devin CLI 内置文档 `extensibility/hooks/overview.mdx` 与 `extensibility/hooks/lifecycle-hooks.mdx`（事件、输出格式、配置位置、读取 `.claude/` 的默认行为）。
 7. goal-acceptance 项目的 `src/framework/hook-runtime.ts`、`src/framework/hooksettings.ts`（hook 的 stdin/stdout 协议外壳，以及按标记增删 hook 条目）。
 8. 本仓库：`docs/SPEC.md`、`docs/PLATFORM-ADAPTATION.md`、`src/tools.ts`、`src/database.ts`、`src/install/targets.ts`、`src/assets/agents-fragment.md`。
+9. Cursor hooks 文档（事件名、扁平条目、`permission`/`user_message`/`agent_message`/`additional_context` 输出、`conversation_id`、Windows PowerShell 执行）：<https://cursor.com/docs/hooks>
+10. Codex hooks 文档（`~/.codex/hooks.json`、嵌套 matcher 结构、`hookSpecificOutput`、trust review `/hooks`、`PostToolUse` 失败判定）：<https://developers.openai.com/codex/hooks>
+11. OpenCode 插件文档与 V1→V2 迁移指南（`.opencode/plugins/` 发现机制、`ctx.tool.hook("execute.before"/"execute.after")`、V1 格式在 V2 不运行）：<https://opencode.ai/docs/plugins/>、<https://opencode.ai/docs/build/plugins/>、<https://opencode.ai/docs/build/plugins/migrate-v1/>
+12. OpenCode issue #50434（本地插件无法解析 `@opencode/plugin`，纯默认导出对象可用）：<https://github.com/anomalyco/opencode/issues/50434>

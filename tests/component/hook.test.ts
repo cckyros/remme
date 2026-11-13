@@ -106,6 +106,90 @@ test("hook posttool (claude): PostToolUseFailure payload injects context", () =>
   } finally { done(); }
 });
 
+test("hook pretool (cursor): flat payload uses conversation_id and snake_case deny output", () => {
+  const { project, hook, writeMemory, done } = sandbox();
+  try {
+    writeMemory("p.md", pitfall);
+    const input = {
+      hook_event_name: "preToolUse", conversation_id: "conv-1", generation_id: "g1",
+      tool_name: "Shell", tool_input: { command: "git commit -m x <<EOF" },
+      cwd: project, workspace_roots: [project],
+    };
+    const first = hook(["pretool", "cursor"], input);
+    assert.equal(first.code, 0, first.err);
+    const decision = JSON.parse(first.out);
+    assert.equal(decision.permission, "deny");
+    assert.match(decision.agent_message, /memory_read\("2026-11\/p\.md"\)/);
+    assert.equal(decision.user_message, decision.agent_message);
+    // Same conversation retries silently; a new conversation is blocked again.
+    assert.equal(hook(["pretool", "cursor"], input).out, "");
+    assert.match(hook(["pretool", "cursor"], { ...input, conversation_id: "conv-2" }).out, /"deny"/);
+    // beforeSubmitPrompt cannot inject context — prompt stays silent even on a hit.
+    const prompt = hook(["prompt", "cursor"], { hook_event_name: "beforeSubmitPrompt", conversation_id: "conv-3", prompt: "heredoc question", cwd: project });
+    assert.equal(prompt.out, "");
+  } finally { done(); }
+});
+
+test("hook posttool (cursor): postToolUseFailure injects additional_context snake_case", () => {
+  const { project, hook, writeMemory, done } = sandbox();
+  try {
+    writeMemory("p.md", pitfall);
+    const r = hook(["posttool", "cursor"], {
+      hook_event_name: "postToolUseFailure", conversation_id: "conv-1",
+      tool_name: "Shell", tool_input: { command: "git commit <<EOF" },
+      error_message: "heredoc exploded", failure_type: "non_zero_exit", cwd: project,
+    });
+    const out = JSON.parse(r.out);
+    assert.match(out.additional_context, /memory_read/);
+    assert.equal(out.hookSpecificOutput, undefined);
+  } finally { done(); }
+});
+
+test("hook (codex): PascalCase events reuse claude output; PostToolUse filters failures heuristically", () => {
+  const { project, hook, writeMemory, done } = sandbox();
+  try {
+    writeMemory("p.md", pitfall);
+    const pre = hook(["pretool", "codex"], {
+      session_id: "cx1", turn_id: "t1", tool_name: "Bash",
+      tool_input: { command: "git commit -m x <<EOF" }, cwd: project,
+    });
+    const deny = JSON.parse(pre.out);
+    assert.equal(deny.hookSpecificOutput.hookEventName, "PreToolUse");
+    assert.equal(deny.hookSpecificOutput.permissionDecision, "deny");
+    // Successful PostToolUse (exit_code 0) stays silent.
+    const okRun = hook(["posttool", "codex"], {
+      session_id: "cx2", tool_name: "Bash", tool_input: { command: "git commit <<EOF" },
+      tool_response: { exit_code: 0, stdout: "committed" }, cwd: project,
+    });
+    assert.equal(okRun.out, "");
+    // Failed PostToolUse (non-zero exit + stderr keywords) injects context.
+    const fail = hook(["posttool", "codex"], {
+      session_id: "cx3", tool_name: "Bash", tool_input: { command: "git commit <<EOF" },
+      tool_response: { exit_code: 1, stderr: "heredoc delimiter not found" }, cwd: project,
+    });
+    const ctx = JSON.parse(fail.out);
+    assert.equal(ctx.hookSpecificOutput.hookEventName, "PostToolUse");
+    assert.match(ctx.hookSpecificOutput.additionalContext, /memory_read/);
+    // Prompt warnings work like claude's.
+    const prompt = hook(["prompt", "codex"], { session_id: "cx4", prompt: "heredoc question", cwd: project });
+    assert.equal(JSON.parse(prompt.out).hookSpecificOutput.hookEventName, "UserPromptSubmit");
+  } finally { done(); }
+});
+
+test("hook pretool (opencode): plugin payload gets devin-style block decision", () => {
+  const { project, hook, writeMemory, done } = sandbox();
+  try {
+    writeMemory("p.md", pitfall);
+    const r = hook(["pretool", "opencode"], {
+      session_id: "oc1", tool_name: "bash", tool_input: { command: "git commit -m x <<EOF" }, cwd: project,
+    });
+    const decision = JSON.parse(r.out);
+    assert.equal(decision.decision, "block");
+    assert.match(decision.reason, /memory_read/);
+    assert.equal(hook(["pretool", "opencode"], { session_id: "oc1", tool_name: "bash", tool_input: { command: "git commit -m x <<EOF" }, cwd: project }).out, "");
+  } finally { done(); }
+});
+
 test("hook fails open: garbage stdin, missing store, corrupt index, no DB writes", () => {
   const { home, project, hook, writeMemory, done } = sandbox();
   try {

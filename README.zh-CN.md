@@ -202,10 +202,10 @@ node dist/cli.js uninstall --target claude --dir <project>
 
 ### 坑警示（可选）
 
-`install --hooks` 只为 **Claude Code** 和 **Devin** 安装生命周期 hook。当提示词、工具调用或工具失败命中 `confirmed`/`verified` 记忆的触发字段时，Agent 会收到一条警示和 `memory_read` 指引。`PreToolUse` 每条记忆每会话只拦截一次并给出理由，重试即放行；提示词和失败 hook 注入简短上下文。hook 出错时静默放行，不碰数据库，每次调用约 50ms。其他目标仍然只有显式 `memory_search`。
+`install --hooks` 为 **Claude Code、Devin、Cursor、Codex 和 OpenCode** 安装坑警示 hook。当工具调用或工具失败命中 `confirmed`/`verified` 记忆的触发字段时，Agent 会收到一条警示和 `memory_read` 指引。`PreToolUse` 每条记忆每会话只拦截一次并给出理由，重试即放行；提示词和失败 hook 注入简短上下文（Cursor 无法注入提示词上下文，OpenCode 只在工具调用时警示）。Codex 的非托管 hook 需经 `/hooks` 信任后才生效。hook 出错时静默放行，不碰数据库，每次调用约 50ms。其他目标仍然只有显式 `memory_search`。
 
 ```bash
-node dist/cli.js install --target claude,devin --hooks   # MCP + skill + 坑警示 hook
+node dist/cli.js install --target claude,devin,cursor,codex,opencode --hooks
 node dist/cli.js uninstall --target claude               # 同时移除我们的 hook
 ```
 
@@ -263,7 +263,7 @@ npm run verify     # 以上全部
 ## 设计边界
 
 - 向量检索是本地精确扫描，尚未引入 HNSW/ANN 索引。
-- 默认由 Agent 显式调用 `memory_search` 召回；`--hooks` 可选安装有边界的坑警示（仅 Claude Code 和 Devin，仅 confirmed/verified 且带显式触发条件的记忆，每会话一次，失败静默放行）。
+- 默认由 Agent 显式调用 `memory_search` 召回；`--hooks` 可选安装有边界的坑警示（Claude Code、Devin、Cursor、Codex、OpenCode，仅 confirmed/verified 且带显式触发条件的记忆，每会话一次，失败静默放行）。
 - 不做无人值守的 LLM 记忆整理，不索引完整会话历史。
 - 只支持本地 embedding，暂不支持远程 embedding 服务和 HTTP/SSE 传输。
 - 插件包在本地构建（`dist/` 不入库），因此请从克隆的仓库安装。
