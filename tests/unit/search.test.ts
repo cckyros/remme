@@ -4,7 +4,7 @@ import { rankResults } from "../../src/search.ts";
 import type { SearchItem } from "../../src/search.ts";
 
 function item(id: number, snippet: string, score = 1000 - id): SearchItem {
-  return { id, path: `${id}.md`, snippet, score, vectorScore: 0, textScore: 0, importance: 5, tags: [], status: "candidate", agent: "test", startLine: 1, endLine: 1 };
+  return { id, path: `${id}.md`, snippet, score, similarity: score, vectorScore: 0, textScore: 0, importance: 5, tags: [], status: "candidate", agent: "test", startLine: 1, endLine: 1 };
 }
 
 // ============================================================

@@ -110,9 +110,10 @@ export async function memorySearch(args: Record<string, unknown>): Promise<unkno
     const row = (textMap.get(id)?.row ?? vectorMap.get(id)?.row)!;
     const vectorScore = vectorMap.get(id)?.score ?? 0;
     const textScore = textMap.get(id)?.score ?? 0;
-    const score = (config.vectorWeight * vectorScore + config.textWeight * textScore) * (0.75 + row.importance * 0.05);
-    return { id, path: relative(config.memoryDir, row.path), snippet: row.text, score, vectorScore, textScore, importance: row.importance, tags: JSON.parse(row.tags), status: row.status, knowledgeType: row.knowledge_type ?? undefined, project: row.project ?? undefined, agent: row.agent, created: row.created, startLine: row.start_line, endLine: row.end_line };
-  }).filter((item) => item.score >= threshold);
+    const similarity = config.vectorWeight * vectorScore + config.textWeight * textScore;
+    const score = similarity * (0.75 + row.importance * 0.05);
+    return { id, path: relative(config.memoryDir, row.path), snippet: row.text, score, similarity, vectorScore, textScore, importance: row.importance, tags: JSON.parse(row.tags), status: row.status, knowledgeType: row.knowledge_type ?? undefined, project: row.project ?? undefined, agent: row.agent, created: row.created, startLine: row.start_line, endLine: row.end_line };
+  }).filter((item) => item.similarity >= threshold);
   return { results: rankResults(items, config.mmrEnabled, limit), mode: q ? "hybrid" : "text-only", total: items.length, candidateLimit };
 }
 

@@ -23,7 +23,7 @@ const defaults: Config = {
   vectorWeight: 0.7,
   textWeight: 0.3,
   maxResults: 6,
-  minScore: 0,
+  minScore: 0.25,
   mmrEnabled: true,
   agent: process.env.REMME_AGENT ?? "unknown",
 };

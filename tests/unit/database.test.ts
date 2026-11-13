@@ -235,6 +235,16 @@ test("searchText: short token uses instr fallback", (t) => {
   assert.equal(db.searchText("短").length, 1);
 });
 
+test("searchText: tokens are OR-ed — partial term coverage still matches", (t) => {
+  const { db, config } = fixture(t);
+  db.insertChunk(join(config.memoryDir, "a.md"), chunk("alphaword only here"), "h1");
+  db.insertChunk(join(config.memoryDir, "b.md"), chunk("gammaword only here"), "h2");
+  db.insertChunk(join(config.memoryDir, "c.md"), chunk("unrelated content"), "h3");
+  const results = db.searchText("alphaword gammaword");
+  assert.equal(results.length, 2);
+  assert.ok(results.every((r) => r.row.path.includes("a.md") || r.row.path.includes("b.md")));
+});
+
 test("searchText: filters applied before limit", (t) => {
   const { db, config } = fixture(t);
   for (let i = 0; i < 120; i++) db.insertChunk(join(config.memoryDir, `${i}.md`), chunk("needlephrase", "other"), `h-${i}`);

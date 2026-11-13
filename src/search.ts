@@ -1,4 +1,4 @@
-export interface SearchItem { id: number; path: string; snippet: string; score: number; vectorScore: number; textScore: number; importance: number; tags: string[]; status: string; knowledgeType?: string; project?: string; agent: string; startLine: number; endLine: number; }
+export interface SearchItem { id: number; path: string; snippet: string; score: number; similarity: number; vectorScore: number; textScore: number; importance: number; tags: string[]; status: string; knowledgeType?: string; project?: string; agent: string; startLine: number; endLine: number; }
 
 function snippetWordSet(snippet: string): Set<string> {
   const normalized = snippet.normalize("NFKC").toLowerCase();

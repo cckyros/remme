@@ -33,7 +33,7 @@ test("loadConfig: returns defaults when no config file exists", () => {
   assert.equal(config.vectorWeight, 0.7);
   assert.equal(config.textWeight, 0.3);
   assert.equal(config.maxResults, 6);
-  assert.equal(config.minScore, 0);
+  assert.equal(config.minScore, 0.25);
   assert.equal(config.mmrEnabled, true);
   assert.ok(config.dbPath.endsWith("memory.db"));
   assert.ok(config.memoryDir.endsWith("memory"));

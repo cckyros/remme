@@ -251,7 +251,9 @@ export class MemoryDatabase {
       const rows = this.db.prepare(`SELECT c.* FROM memory_chunks c WHERE ${sql} AND ${tokens.map(() => "instr(lower(c.text), lower(?)) > 0").join(" AND ")} ORDER BY c.id LIMIT ?`).all(...values, ...tokens, count) as DbRow[];
       return rows.map((row, index) => ({ row, score: 1 - index / Math.max(1, count) }));
     }
-    const match = tokens.map((token) => `"${token.replaceAll('"', '""')}"`).join(" ");
+    // OR semantics: any query token may match. AND across all tokens was too
+    // strict — one paraphrased word zeroed the whole text channel.
+    const match = tokens.map((token) => `"${token.replaceAll('"', '""')}"`).join(" OR ");
     const rows = this.db.prepare(`SELECT c.*, bm25(memory_fts) AS bm25 FROM memory_fts JOIN memory_chunks c ON c.id=memory_fts.rowid WHERE memory_fts MATCH ? AND ${sql} ORDER BY bm25(memory_fts), c.id LIMIT ?`).all(match, ...values, count) as (DbRow & { bm25: number })[];
     if (!rows.length) return [];
     const worst = rows[rows.length - 1].bm25; const range = rows[0].bm25 - worst;
