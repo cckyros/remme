@@ -198,7 +198,7 @@ tool_timeout_sec = 180
 
 **特殊处理**：Codex 的 `models.json` 有一个 bug（openai/codex#36382），`supports_search_tool: true` 会隐藏所有 `mcp__*` 工具。适配器自动将其翻转为 `false`。
 
-**坑警示 hook**（`--hooks`）：写 `<scope>/.codex/hooks.json`（项目）或 `~/.codex/hooks.json`（全局），结构与 Claude Code 相同（事件 → matcher 组 → `type:"command"` 处理器）。事件为 `PreToolUse`/`UserPromptSubmit`/`PostToolUse`，matcher 覆盖 `Bash|apply_patch|Edit|Write|mcp__`。**注意**：非托管 hook 需用户在 Codex 内用 `/hooks` 审查信任后才生效；`PostToolUse` 对成功调用也触发，hook 内部按 `tool_response` 的失败标记过滤（exit_code≠0、success=false、error 字段等）。
+**坑警示 hook**（`--hooks`）：写 `<scope>/.codex/hooks.json`（项目）或 `~/.codex/hooks.json`（全局），结构与 Claude Code 相同（事件 → matcher 组 → `type:"command"` 处理器）。事件为 `PreToolUse`/`UserPromptSubmit`/`PostToolUse`，matcher 覆盖 `Bash|apply_patch|Edit|Write|mcp__`。**注意**：非托管 hook 需用户在 Codex 内用 `/hooks` 审查信任后才生效（`codex exec` 可用 `--dangerously-bypass-hook-trust` 跳过）；`PostToolUse` 对成功调用也触发，hook 内部按 `tool_response` 的失败标记过滤（exit_code≠0、success=false、error 字段等）。**Windows**：Codex 经 PowerShell 解析 hook 命令，开头带引号的路径会被当作字符串字面量导致 spawn 失败——安装器在 Windows 下把命令包装为 `cmd /c ""<node>" "<hook.js>" remme-hook …"`（已在 codex-cli 0.169.0 实测拦截生效）。
 
 ### 3. OpenCode（`native-opencode.ts`）
 

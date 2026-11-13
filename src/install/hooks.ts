@@ -18,7 +18,15 @@ interface Spec { event: string; matcher?: string; platform: Platform; arg: strin
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 function command(spec: Spec): string {
-  return `${JSON.stringify(process.execPath)} ${JSON.stringify(hookPath)} ${MARK} ${spec.arg} ${spec.platform}`;
+  const tail = `${MARK} ${spec.arg} ${spec.platform}`;
+  // Codex on Windows feeds hook commands through PowerShell, where a leading
+  // quoted string parses as a literal expression instead of a command — the
+  // hook then fails to spawn. cmd /c ""exe" "script" args" is the form that
+  // survives that runner (verified against codex-cli 0.169.0).
+  if (spec.platform === "codex" && process.platform === "win32") {
+    return `cmd /c ""${process.execPath}" "${hookPath}" ${tail}"`;
+  }
+  return `${JSON.stringify(process.execPath)} ${JSON.stringify(hookPath)} ${tail}`;
 }
 
 function specs(platform: Platform): Spec[] {

@@ -1,6 +1,6 @@
 # 踩坑警示（Pitfall Warning）规划
 
-> 状态：**P0–P4 已实现**（2026-11-13）。`src/triggers.ts` + `src/hook.ts`（`dist/hook.js`）、`install --hooks`（claude/devin/cursor/codex/opencode）、触发字段进 frontmatter/MCP schema、文档已同步；P5 实机验证待做。决策 D1–D4 按下文"建议"执行。
+> 状态：**P0–P5 已实现并部分实机验证**（2026-11-13）。`src/triggers.ts` + `src/hook.ts`（`dist/hook.js`）、`install --hooks`（claude/devin/cursor/codex/opencode）、触发字段进 frontmatter/MCP schema、文档已同步。实机验证结果：Devin 真实会话确认 hook 触发（`~/.remme/hook-state.json` 有 `ses_*` 会话记录）；Codex `codex exec` 实测 PreToolUse 拦截 `pip show duckdb` 并引导 `memory_read`（codex-cli 0.169.0，Windows——发现并修复了 Windows 下 hook 命令经 PowerShell 解析导致带引号路径无法 spawn 的问题，现以 `cmd /c` 包装下发）；OpenCode `opencode run` 实测插件 `execute.before` 抛错拦截同一命令（v2.3.0）。Cursor / Claude Code 无本机 CLI，仅 payload 级验证。决策 D1–D4 按下文"建议"执行。
 > 本文归纳调研结论、决策项和分阶段计划，作为实现依据保留。
 
 ## 目标
@@ -175,7 +175,7 @@ Read details with memory_read(path) before continuing.
 | P2 | hook 运行时 | `remme hook <event>`：输入归一化、只读查询、去重、预算、两个平台的输出格式 | 组件测试：用样例输入驱动 `dist/cli.js`；异常路径输出空对象且退出码为 0；测量耗时 |
 | P3 | 安装器 | `claude` / `devin` / `cursor` / `codex` / `opencode` 目标的 hook 写入与卸载，`--hooks` 开关 | 组件测试（临时 HOME）：幂等、保留用户已有 hook、卸载只删自己的 |
 | P4 | 规则与文档 | `agents-fragment.md` 增加"写坑时填触发条件"；`SPEC.md`、`PLATFORM-ADAPTATION.md`、中英文 README 更新设计边界 | 文档里的事实与代码一致 |
-| P5 | 实机验证 | 在真实 Claude Code 和 Devin 会话里各跑一遍三个挂载点 | 记录实际表现和耗时；Devin 用 `/hooks` 确认加载 |
+| P5 | 实机验证 | 在真实客户端会话里跑一遍挂载点 | 已记录：Devin（state 文件证据）、Codex exec（拦截+memory_read 闭环）、OpenCode run（插件拦截）；Cursor/Claude Code 待有 CLI 的环境补验 |
 
 依赖关系：P1 → P2 → P3；P4 可与 P3 并行；P5 在 P3 之后。
 

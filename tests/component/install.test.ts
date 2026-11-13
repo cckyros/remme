@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 
 function sandbox() {
@@ -289,6 +290,41 @@ test("install --hooks: opencode writes a plugin file; foreign remme.js is preser
     cli(["uninstall", "--target", "opencode"]);
     assert.equal(readFileSync(plugin, "utf8"), "export default { id: 'mine' };\n");
   } finally { done(); }
+});
+
+test("opencode plugin: execute.before forwards to hook.js, throws once per session", async () => {
+  const { root, home, project, cli, done } = sandbox();
+  const prevEnv = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, REMME_CONFIG: process.env.REMME_CONFIG };
+  try {
+    assert.equal(cli(["install", "--target", "opencode", "--hooks"]).code, 0);
+    const pluginFile = join(project, ".opencode", "plugins", "remme.js");
+    // Node treats .js as CJS without type:module — copy to .mjs for import().
+    const tmpPlugin = join(project, "remme-plugin.mjs");
+    writeFileSync(tmpPlugin, readFileSync(pluginFile, "utf8"));
+
+    // A confirmed pitfall with a command trigger, inside the sandbox HOME.
+    const memDir = join(home, ".remme", "memory", "2026-11");
+    mkdirSync(memDir, { recursive: true });
+    writeFileSync(join(memDir, "p.md"),
+      '---\nimportance: 5\ntags: []\nknowledgeType: "pitfall"\nproject: ""\ncreated: "2026-01-01T00:00:00Z"\nagent: "test"\nentities: []\nstatus: "verified"\ntriggerCommands: ["pip show duckdb"]\n---\n\nduckdb pitfall\n');
+
+    // The plugin spawns hook.js which reads HOME — point the test process at
+    // the sandbox so it sees only the fixture memory.
+    process.env.HOME = home; process.env.USERPROFILE = home; process.env.REMME_CONFIG = join(root, "no-config.json");
+    const mod = await import(pathToFileURL(tmpPlugin).href);
+    let callback: ((event: any) => Promise<void> | void) | undefined;
+    await mod.default.setup({ tool: { hook: async (name: string, cb: any) => { assert.equal(name, "execute.before"); callback = cb; } } });
+    assert.ok(callback, "execute.before hook was not registered");
+
+    const event = { tool: "bash", sessionID: "s1", input: { command: "pip show duckdb" } };
+    await assert.rejects(async () => await callback!(event), /memory_read|remme/);
+    // Same session retry resolves silently; unrelated command never throws.
+    await callback!(event);
+    await callback!({ tool: "bash", sessionID: "s2", input: { command: "ls -la" } });
+  } finally {
+    process.env.HOME = prevEnv.HOME; process.env.USERPROFILE = prevEnv.USERPROFILE; process.env.REMME_CONFIG = prevEnv.REMME_CONFIG;
+    done();
+  }
 });
 
 test("install: unknown target and missing --target fail with a clear message", () => {
