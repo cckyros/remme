@@ -128,7 +128,6 @@ async function main(): Promise<void> {
   let dirty = false;
 
   const { paths, commands } = toolIO(input);
-  const toolText = commands.join("\n");
 
   if (event === "prompt") {
     // Cursor's beforeSubmitPrompt can only continue/block — it cannot inject
@@ -141,7 +140,9 @@ async function main(): Promise<void> {
     session.updatedAt = new Date().toISOString();
     additionalContext(platform, eventName(platform, event), formatWarnings(hits));
   } else if (event === "pretool") {
-    const hits = fresh(matchWarnings(entries, { paths, commands, text: toolText, cwd }), blkSeen);
+    // Commands match triggerCommands and detached keywords only — loose
+    // keyword substring flooded warnings with path-embedded false hits.
+    const hits = fresh(matchWarnings(entries, { paths, commands, cwd }), blkSeen);
     if (!hits.length) return;
     for (const h of hits) { session.blk.push(h.path); dirty = true; }
     session.updatedAt = new Date().toISOString();
@@ -157,8 +158,10 @@ async function main(): Promise<void> {
     const respJson = isObj(input.tool_response) ? JSON.stringify(input.tool_response).slice(0, 1500) : "";
     const errorText = [str(input.error), str(input.error_message), str(response.error), str(response.output), respText, respJson]
       .filter(Boolean).join("\n").slice(0, 4000);
-    const blob = `${str(input.tool_name) ?? ""}\n${JSON.stringify(input.tool_input ?? {}).slice(0, 2000)}\n${errorText}`;
-    const hits = fresh(matchWarnings(entries, { paths, commands, text: blob, cwd }), ctxSeen);
+    // Loose keywords apply to the failure prose only; the command itself is
+    // already matched (strictly) via paths/commands.
+    const text = [str(input.tool_name), errorText].filter(Boolean).join("\n");
+    const hits = fresh(matchWarnings(entries, { paths, commands, text, cwd }), ctxSeen);
     if (!hits.length) return;
     for (const h of hits) { session.ctx.push(h.path); dirty = true; }
     session.updatedAt = new Date().toISOString();

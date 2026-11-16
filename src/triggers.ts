@@ -111,13 +111,31 @@ export function matchKeywords(keywords: string[], text: string): boolean {
   return keywords.some((kw) => kw && haystack.includes(kw.toLowerCase()));
 }
 
+const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Stricter keyword match for command strings. Loose substring hits every
+ *  keyword embedded in a path or identifier (`agents.md` inside
+ *  `devin\AGENTS.md`, `hook` inside `dist/hook.js`), which flooded warnings
+ *  with false positives. A keyword in a command must be "detached": no
+ *  word char, slash, backslash, dot or hyphen glued to its left, and no
+ *  word char glued to its right — so `WINWORD.EXE`, `gemini-2.0` and
+ *  `__list.py` still count, but path-embedded names do not. */
+export function matchCommandKeywords(keywords: string[], commands: string[]): boolean {
+  if (!keywords.length || !commands.length) return false;
+  const text = commands.join("\n");
+  return keywords.some((kw) => {
+    if (!kw) return false;
+    return new RegExp(`(?<![\\w./\\\\-])${escapeRegExp(kw)}(?![\\w])`, "i").test(text);
+  });
+}
+
 export function matchWarnings(entries: WarningEntry[], ctx: MatchContext, limit = MAX_WARNINGS): WarningEntry[] {
   const out: WarningEntry[] = [];
   for (const entry of entries) {
     const t = entry.triggers;
     const hit =
       (ctx.paths && matchPaths(t.paths, ctx.paths, ctx.cwd)) ||
-      (ctx.commands && matchCommands(t.commands, ctx.commands)) ||
+      (ctx.commands && (matchCommands(t.commands, ctx.commands) || matchCommandKeywords(t.keywords, ctx.commands))) ||
       (ctx.text && matchKeywords(t.keywords, ctx.text));
     if (hit) {
       out.push(entry);

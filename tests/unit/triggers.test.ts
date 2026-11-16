@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildWarningIndex, formatBlockReason, formatWarnings, globToRegExp, hasTriggers,
-  indexPath, loadHookState, matchCommands, matchKeywords, matchPaths, matchWarnings,
+  indexPath, loadHookState, matchCommandKeywords, matchCommands, matchKeywords, matchPaths, matchWarnings,
   refreshWarningIndex, saveHookState, sessionOf, triggersOf, warningsForHook,
   type WarningEntry,
 } from "../../src/triggers.ts";
@@ -71,16 +71,43 @@ test("matchKeywords: case-insensitive substring incl. CJK", () => {
   assert.equal(matchKeywords([], "x"), false);
 });
 
+test("matchCommandKeywords: keyword must be detached, not embedded in paths/identifiers", () => {
+  // False positives this prevents: keyword glued into a longer path or word.
+  assert.equal(matchCommandKeywords(["agents.md"], ["python -c \"p=r'C:\\devin\\AGENTS.md'\""]), false);
+  assert.equal(matchCommandKeywords(["hook"], ["ls dist/hook.js", "node remme-hook.js"]), false);
+  assert.equal(matchCommandKeywords(["hooks.json"], ["cat .codex/hooks.json"]), false);
+  assert.equal(matchCommandKeywords(["spawn"], ["const x = spawnSync(...)"]), false);
+  assert.equal(matchCommandKeywords(["xlsx"], ["genoffice convert a.xlsx"]), false);
+  assert.equal(matchCommandKeywords(["acp"], ["devin-acp run"]), false);
+  // Still matches detached usage.
+  assert.equal(matchCommandKeywords(["agents.md"], ["cat AGENTS.md"]), true);
+  assert.equal(matchCommandKeywords(["hook"], ["node hook.js"]), true);
+  assert.equal(matchCommandKeywords(["duckdb"], ["pip show duckdb"]), true);
+  assert.equal(matchCommandKeywords(["codex"], ["codex exec --json"]), true);
+  assert.equal(matchCommandKeywords(["powershell"], ["powershell -Command 'ls'"]), true);
+  // Suffixes after . or - still count (model names, exe names, member access).
+  assert.equal(matchCommandKeywords(["gemini"], ["bedrock invoke gemini-2.0-flash"]), true);
+  assert.equal(matchCommandKeywords(["ollama"], ["ollama.exe run qwen3"]), true);
+  // CJK keywords behave like plain substring (no ASCII-boundary concerns).
+  assert.equal(matchCommandKeywords(["药店"], ["查药店营业时间"]), true);
+  assert.equal(matchCommandKeywords([], ["anything"]), false);
+  assert.equal(matchCommandKeywords(["x"], []), false);
+});
+
 // ---------------------------------------------------------------- matchWarnings
 
 test("matchWarnings: hits via each trigger kind, capped at limit", () => {
   const e1 = entry({ path: "a.md", triggers: { paths: ["src/x.ts"], commands: [], keywords: [] } });
   const e2 = entry({ path: "b.md", triggers: { paths: [], commands: ["^deploy "], keywords: [] } });
   const e3 = entry({ path: "c.md", triggers: { paths: [], commands: [], keywords: ["heredoc"] } });
-  const entries = [e1, e2, e3];
+  const e4 = entry({ path: "d.md", triggers: { paths: [], commands: [], keywords: ["duckdb"] } });
+  const entries = [e1, e2, e3, e4];
   assert.deepEqual(matchWarnings(entries, { paths: ["src/x.ts"], cwd: "" }).map((e) => e.path), ["a.md"]);
   assert.deepEqual(matchWarnings(entries, { commands: ["deploy prod"], cwd: "" }).map((e) => e.path), ["b.md"]);
   assert.deepEqual(matchWarnings(entries, { commands: ["deploy prod"], text: "please fix heredoc", cwd: "" }).map((e) => e.path), ["b.md", "c.md"]);
+  // Keywords also fire on commands — but only as detached tokens.
+  assert.deepEqual(matchWarnings(entries, { commands: ["pip show duckdb"], cwd: "" }).map((e) => e.path), ["d.md"]);
+  assert.deepEqual(matchWarnings(entries, { commands: ["pip install my-duckdb-tools"], cwd: "" }), []);
   assert.deepEqual(matchWarnings(entries, { text: "unrelated prompt", cwd: "" }), []);
   const many = Array.from({ length: 6 }, (_, i) => entry({ path: `${i}.md`, triggers: { paths: ["hit.ts"], commands: [], keywords: [] } }));
   assert.equal(matchWarnings(many, { paths: ["hit.ts"], cwd: "" }).length, 3);

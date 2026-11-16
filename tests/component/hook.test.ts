@@ -190,6 +190,32 @@ test("hook pretool (opencode): plugin payload gets devin-style block decision", 
   } finally { done(); }
 });
 
+test("hook pretool: keywords embedded in paths do not block; detached keywords do", () => {
+  const { project, hook, writeMemory, done } = sandbox();
+  try {
+    writeMemory("p.md", 'status: "verified"\ntriggerKeywords: ["agents.md"]\n');
+    const env = { DEVIN_PROJECT_DIR: project };
+    // Path-embedded filename: the reported false positive stays silent.
+    const embedded = hook(["pretool", "devin"], payload({
+      session_id: "p1", tool_name: "exec",
+      tool_input: { command: "python -c \"p=r'C:\\Users\\z\\devin\\AGENTS.md'\"" }, cwd: project,
+    }), env);
+    assert.equal(embedded.out, "");
+    // Detached keyword in a command still blocks once per session.
+    const detached = hook(["pretool", "devin"], payload({
+      session_id: "p2", tool_name: "exec",
+      tool_input: { command: "cat AGENTS.md" }, cwd: project,
+    }), env);
+    assert.equal(JSON.parse(detached.out).decision, "block");
+    // Failure output keeps loose substring matching (prose context).
+    const fail = hook(["posttool", "devin"], payload({
+      session_id: "p3", tool_name: "exec", tool_input: { command: "cat x" },
+      tool_response: { success: false, error: "cannot read C:\\devin\\AGENTS.md" }, cwd: project,
+    }), env);
+    assert.match(fail.out, /PostToolUse/);
+  } finally { done(); }
+});
+
 test("hook fails open: garbage stdin, missing store, corrupt index, no DB writes", () => {
   const { home, project, hook, writeMemory, done } = sandbox();
   try {
